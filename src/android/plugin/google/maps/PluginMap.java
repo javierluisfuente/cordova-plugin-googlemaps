@@ -1,11 +1,10 @@
 package plugin.google.maps;
 
-import android.Manifest;
-import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.app.Activity;
+import android.content.pm.PackageManager;
+import android.content.res.Resources;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Point;
 import android.graphics.RectF;
@@ -16,10 +15,9 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.support.annotation.NonNull;
-import android.support.v4.content.PermissionChecker;
 import android.util.Base64;
 import android.util.Log;
+import android.util.LruCache;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -53,26 +51,24 @@ import com.google.android.gms.maps.model.LatLng;
 import com.google.android.gms.maps.model.LatLngBounds;
 import com.google.android.gms.maps.model.MapStyleOptions;
 import com.google.android.gms.maps.model.Marker;
-import com.google.android.gms.maps.model.MarkerOptions;
-import com.google.android.gms.maps.model.PointOfInterest;
 import com.google.android.gms.maps.model.Polygon;
 import com.google.android.gms.maps.model.Polyline;
-import com.google.android.gms.maps.model.PolylineOptions;
 import com.google.android.gms.maps.model.VisibleRegion;
 
 import org.apache.cordova.CallbackContext;
 import org.apache.cordova.CordovaInterface;
 import org.apache.cordova.CordovaPlugin;
+import org.apache.cordova.CordovaPreferences;
 import org.apache.cordova.CordovaWebView;
 import org.apache.cordova.PluginEntry;
+import org.apache.cordova.PluginManager;
 import org.apache.cordova.PluginResult;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
-import java.io.UnsupportedEncodingException;
-import java.util.ArrayList;
+import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -88,28 +84,25 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
     OnMyLocationButtonClickListener, OnIndoorStateChangeListener, InfoWindowAdapter,
     GoogleMap.OnCameraIdleListener, GoogleMap.OnCameraMoveCanceledListener,
     GoogleMap.OnCameraMoveListener, GoogleMap.OnCameraMoveStartedListener,
-    GoogleMap.OnInfoWindowLongClickListener, GoogleMap.OnInfoWindowCloseListener,
-    GoogleMap.OnMyLocationClickListener, GoogleMap.OnPoiClickListener,
-    IPluginView{
+    GoogleMap.OnInfoWindowLongClickListener, GoogleMap.OnInfoWindowCloseListener {
 
   private LatLngBounds initCameraBounds;
   private Activity activity;
   public GoogleMap map;
-  private MapView mapView;
-  private String mapId;
-  private boolean isVisible = true;
-  private boolean isClickable = true;
-  private final String TAG = mapId;
-  private String mapDivId;
-  public Map<String, PluginEntry> plugins = new ConcurrentHashMap<String, PluginEntry>();
+  public MapView mapView;
+  public String mapId;
+  public boolean isVisible = true;
+  public boolean isClickable = true;
+  public final String TAG = mapId;
+  public String mapDivId;
+  public HashMap<String, PluginEntry> plugins = new HashMap<String, PluginEntry>();
   private final float DEFAULT_CAMERA_PADDING = 20;
   private Projection projection = null;
   public Marker activeMarker = null;
   private boolean isDragging = false;
+  //public final ConcurrentHashMap<String, Object> objects = new ConcurrentHashMap<String, Object>();
   public final ObjectCache objects = new ObjectCache();
-  private ImageView dummyMyLocationButton;
-  public static final Object semaphore = new Object();
-  private int viewDepth = 0;
+
 
   private enum TEXT_STYLE_ALIGNMENTS {
     left, center, right
@@ -135,26 +128,6 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
     String styles;
   }
 
-  public int getViewDepth() {
-    return viewDepth;
-  }
-  public String getDivId() {
-    return this.mapDivId;
-  }
-  public String getOverlayId() {
-    return this.mapId;
-  }
-  public ViewGroup getView() {
-    return this.mapView;
-  }
-  public boolean getVisible() {
-    return isVisible;
-  }
-  public boolean getClickable() {
-    return isClickable;
-  }
-
-
   @Override
   public void initialize(CordovaInterface cordova, final CordovaWebView webView) {
     super.initialize(cordova, webView);
@@ -166,9 +139,7 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
   public void getMap(final JSONArray args, final CallbackContext callbackContext) throws JSONException {
 
     GoogleMapOptions options = new GoogleMapOptions();
-    JSONObject meta = args.getJSONObject(0);
-    mapId = meta.getString("__pgmId");
-    viewDepth = meta.getInt("depth");
+    mapId = args.getString(0);
     final JSONObject params = args.getJSONObject(1);
 
     //controls
@@ -183,33 +154,6 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
       }
       if (controls.has("mapToolbar")) {
         options.mapToolbarEnabled(controls.getBoolean("mapToolbar"));
-      }
-
-
-      if (controls.has("myLocationButton") || controls.has("myLocation")) {
-
-        // Request geolocation permission.
-        boolean locationPermission = PermissionChecker.checkSelfPermission(cordova.getActivity(), Manifest.permission.ACCESS_COARSE_LOCATION) == PermissionChecker.PERMISSION_GRANTED;
-        //Log.d(TAG, "---> (235) hasPermission =  " + locationPermission);
-
-        if (!locationPermission) {
-          //_saveArgs = args;
-          //_saveCallbackContext = callbackContext;
-          synchronized (semaphore) {
-            cordova.requestPermissions(PluginMap.this, callbackContext.hashCode(), new String[]{
-                Manifest.permission.ACCESS_FINE_LOCATION
-            });
-            try {
-              semaphore.wait();
-            } catch (InterruptedException e) {
-              e.printStackTrace();
-            }
-          }
-          locationPermission = PermissionChecker.checkSelfPermission(cordova.getActivity(), Manifest.permission.ACCESS_FINE_LOCATION) == PermissionChecker.PERMISSION_GRANTED;
-
-          //Log.d(TAG, "---> (252)setMyLocationEnabled, hasPermission =  " + locationPermission);
-
-        }
       }
     }
 
@@ -283,36 +227,10 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
       @Override
       public void run() {
         mapView.onCreate(null);
-        mapView.setTag(getViewDepth());
 
         mapView.getMapAsync(new OnMapReadyCallback() {
           @Override
           public void onMapReady(GoogleMap googleMap) {
-
-            dummyMyLocationButton = new ImageView(activity);
-            FrameLayout.LayoutParams lParams = new FrameLayout.LayoutParams((int)(48 * density), (int)(48 * density));
-            lParams.gravity = Gravity.RIGHT;
-            lParams.rightMargin = (int)(6 * density);
-            lParams.topMargin = (int)(6 * density);
-            lParams.leftMargin = 0;
-            dummyMyLocationButton.setClickable(true);
-            dummyMyLocationButton.setAlpha(0.75f);
-            dummyMyLocationButton.setVisibility(View.GONE);
-            dummyMyLocationButton.setLayoutParams(lParams);
-
-            int buttonImgId = PluginUtil.getAppResource(cordova.getActivity(), "dummy_my_location_button", "drawable");
-            dummyMyLocationButton.setImageBitmap(BitmapFactory.decodeResource(activity.getResources(), buttonImgId));
-
-            int shadowXmlId = PluginUtil.getAppResource(cordova.getActivity(), "dummy_mylocation_button_shadow", "drawable");
-            dummyMyLocationButton.setBackground(activity.getResources().getDrawable(shadowXmlId));
-
-            dummyMyLocationButton.setOnClickListener(new View.OnClickListener() {
-              @Override
-              public void onClick(View v) {
-                PluginMap.this.onMyLocationButtonClick();
-              }
-            });
-            mapView.addView(dummyMyLocationButton);
 
             map = googleMap;
             projection = map.getProjection();
@@ -335,30 +253,6 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
                   map.setIndoorEnabled(isEnabled);
                 }
 
-                if (controls.has("myLocationButton") || controls.has("myLocation")) {
-                  boolean locationPermission = PermissionChecker.checkSelfPermission(cordova.getActivity(), Manifest.permission.ACCESS_COARSE_LOCATION) == PermissionChecker.PERMISSION_GRANTED;
-                  //Log.d(TAG, "---> (314) hasPermission =  " + locationPermission);
-
-                  if (locationPermission) {
-                    Boolean isMyLocationEnabled = false;
-                    if (controls.has("myLocation")) {
-                      isMyLocationEnabled = controls.getBoolean("myLocation");
-                      map.setMyLocationEnabled(isMyLocationEnabled);
-                    }
-
-                    Boolean isMyLocationButtonEnabled = false;
-                    if (controls.has("myLocationButton")) {
-                      isMyLocationButtonEnabled = controls.getBoolean("myLocationButton");
-                      map.getUiSettings().setMyLocationButtonEnabled(isMyLocationButtonEnabled);
-                    }
-                    //Log.d(TAG, "--->isMyLocationButtonEnabled = " + isMyLocationButtonEnabled + ", isMyLocationEnabled = " + isMyLocationEnabled);
-                    if (!isMyLocationEnabled && isMyLocationButtonEnabled) {
-                      dummyMyLocationButton.setVisibility(View.VISIBLE);
-                    } else {
-                      dummyMyLocationButton.setVisibility(View.GONE);
-                    }
-                  }
-                }
               }
               //preferences
               if (params.has("preferences")) {
@@ -380,12 +274,6 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
                     right = (int) (padding.getInt("right") * density);
                   }
                   map.setPadding(left, top, right, bottom);
-
-                  FrameLayout.LayoutParams lParams2 = (FrameLayout.LayoutParams) dummyMyLocationButton.getLayoutParams();
-                  lParams2.rightMargin = right + (int)(5 * density);
-                  lParams2.topMargin = top + (int)(5 * density);
-                  dummyMyLocationButton.setLayoutParams(lParams2);
-
                 }
 
                 if (preferences.has("zoom")) {
@@ -395,18 +283,6 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
                   }
                   if (zoom.has("maxZoom")) {
                     map.setMaxZoomPreference((float)zoom.getDouble("maxZoom"));
-                  }
-                }
-
-
-                if (preferences.has("gestureBounds")) {
-                  Object target = preferences.get("gestureBounds");
-                  @SuppressWarnings("rawtypes")
-                  Class targetClass = target.getClass();
-                  if ("org.json.JSONArray".equals(targetClass.getName())) {
-                    JSONArray points = preferences.getJSONArray("gestureBounds");
-                    LatLngBounds bounds = PluginUtil.JSONArray2LatLngBounds(points);
-                    map.setLatLngBoundsForCameraTarget(bounds);
                   }
                 }
               }
@@ -426,8 +302,6 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
               map.setOnInfoWindowClickListener(PluginMap.this);
               map.setOnInfoWindowLongClickListener(PluginMap.this);
               map.setOnInfoWindowCloseListener(PluginMap.this);
-              map.setOnMyLocationClickListener(PluginMap.this);
-              map.setOnPoiClickListener(PluginMap.this);
 
               //Custom info window
               map.setInfoWindowAdapter(PluginMap.this);
@@ -435,6 +309,28 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
 
               mapView.onResume();
 
+              if (params.has("controls")) {
+                JSONObject controls = params.getJSONObject("controls");
+
+                if (controls.has("myLocationButton")) {
+                  final Boolean isEnabled = controls.getBoolean("myLocationButton");
+                  cordova.getThreadPool().submit(new Runnable() {
+                    @Override
+                    public void run() {
+                      if (isEnabled) {
+                        try {
+                          JSONArray args = new JSONArray();
+                          args.put(isEnabled);
+                          PluginMap.this.setMyLocationEnabled(args, callbackContext);
+                        } catch (JSONException e) {
+                          e.printStackTrace();
+                          callbackContext.error(e.getMessage() + "");
+                        }
+                      }
+                    }
+                  });
+                }
+              }
 
               // ------------------------------
               // Embed the map if a container is specified.
@@ -442,7 +338,7 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
               if (args.length() == 3) {
                 mapDivId = args.getString(2);
 
-                mapCtrl.mPluginLayout.addPluginOverlay(PluginMap.this);
+                mapCtrl.mPluginLayout.addPluginMap(PluginMap.this);
                 PluginMap.this.resizeMap(args, new PluginUtil.MyCallbackContext("dummy-" + map.hashCode(), webView) {
                   @Override
                   public void onResult(PluginResult pluginResult) {
@@ -455,12 +351,12 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
                           PluginMap.this.onCameraIdle();
                           map.setOnCameraIdleListener(PluginMap.this);
                           Handler handler = new Handler();
-                          handler.postDelayed(new AdjustInitCamera(params, callbackContext), 750);
+                          handler.postDelayed(new AdjustInitCamera(params, callbackContext), 500);
                         }
                       });
                     } else {
                       mapView.setVisibility(View.VISIBLE);
-                      PluginMap.this.onCameraEvent("camera_move_end");
+                      PluginMap.this.onCameraEvent("camera_end");
                       callbackContext.success();
                     }
                   }
@@ -474,12 +370,12 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
                       map.setOnCameraIdleListener(PluginMap.this);
                       mapView.setVisibility(View.INVISIBLE);
                       Handler handler = new Handler();
-                      handler.postDelayed(new AdjustInitCamera(params, callbackContext), 750);
+                      handler.postDelayed(new AdjustInitCamera(params, callbackContext), 500);
                     }
                   });
                 } else {
                   mapView.setVisibility(View.VISIBLE);
-                  PluginMap.this.onCameraEvent("camera_move_end");
+                  PluginMap.this.onCameraEvent("camera_end");
                   callbackContext.success();
                   //if (map.getMapType() == GoogleMap.MAP_TYPE_NONE) {
                     PluginMap.this.onMapLoaded();
@@ -495,41 +391,6 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
 
       }
     });
-  }
-
-  @Override
-  public void onStart() {
-    super.onStart();
-    if (mapView != null) {
-      mapView.onStart();
-    }
-  }
-
-  @Override
-  public void onStop() {
-    super.onStop();
-    if (mapView != null) {
-      mapView.onStop();
-    }
-  }
-
-  @Override
-  public void onPause(boolean multitasking) {
-    super.onPause(multitasking);
-    if (mapView != null && mapView.isActivated()) {
-      mapView.onPause();
-    }
-
-    //mapCtrl.mPluginLayout.removePluginOverlay(this.mapId);
-
-  }
-  @Override
-  public void onResume(boolean multitasking) {
-    super.onResume(multitasking);
-    if (mapView != null && mapView.isActivated()) {
-      mapView.onResume();
-    }
-    //mapCtrl.mPluginLayout.addPluginOverlay(PluginMap.this);
   }
 
   private class AdjustInitCamera implements Runnable {
@@ -559,23 +420,18 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
 
       try {
         if (mParams.has("camera")) {
-          Boolean additionalParams = false;
           JSONObject camera = mParams.getJSONObject("camera");
           if (camera.has("bearing")) {
             builder.bearing((float) camera.getDouble("bearing"));
-            additionalParams = true;
           }
           if (camera.has("tilt")) {
             builder.tilt((float) camera.getDouble("tilt"));
-            additionalParams = true;
-          }
-          if (additionalParams) {
-            map.moveCamera(CameraUpdateFactory.newCameraPosition(builder.build()));
           }
         }
       } catch (Exception e) {
         e.printStackTrace();
       }
+      map.moveCamera(CameraUpdateFactory.newCameraPosition(builder.build()));
       mapView.setVisibility(View.VISIBLE);
       mCallback.success();
 
@@ -619,19 +475,19 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
       ((MyPluginInterface)plugin).setPluginMap(PluginMap.this);
       MyPlugin myPlugin = (MyPlugin) plugin;
       myPlugin.self = (MyPlugin)plugin;
+      myPlugin.CURRENT_PAGE_URL = CURRENT_PAGE_URL;
       myPlugin.create(args, callbackContext);
     } catch (Exception e) {
       e.printStackTrace();
     }
   }
-  private void fitBounds(final LatLngBounds cameraBounds, int padding) {
+  public void fitBounds(final LatLngBounds cameraBounds, int padding) {
     Builder builder = CameraPosition.builder();
     builder.tilt(map.getCameraPosition().tilt);
     builder.bearing(map.getCameraPosition().bearing);
-    Log.d(TAG, mapView.getWidth() + "x" + mapView.getHeight());
 
     // Fit the camera to the cameraBounds with 20px padding.
-    CameraUpdate cameraUpdate = CameraUpdateFactory.newLatLngBounds(cameraBounds, padding / (int)density);
+    CameraUpdate cameraUpdate = CameraUpdateFactory.newLatLngBounds(cameraBounds, padding * (int)density);
     try {
         map.moveCamera(cameraUpdate);
         builder.zoom(map.getCameraPosition().zoom);
@@ -678,16 +534,7 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
   }
 
 
-  public void attachToWebView(JSONArray args, final CallbackContext callbackContext) {
-    mapCtrl.mPluginLayout.addPluginOverlay(this);
-    callbackContext.success();
-  }
-  public void detachFromWebView(JSONArray args, final CallbackContext callbackContext)  {
-    mapCtrl.mPluginLayout.removePluginOverlay(this.mapId);
-    callbackContext.success();
-  }
-
-  public void resizeMap(JSONArray args, final CallbackContext callbackContext) throws JSONException {
+  public void resizeMap(JSONArray args, CallbackContext callbackContext) throws JSONException {
     if (mapCtrl.mPluginLayout == null || mapDivId == null) {
       //Log.d("PluginMap", "---> resizeMap / mPluginLayout = null");
       callbackContext.success();
@@ -719,51 +566,21 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
       mapCtrl.mPluginLayout.HTMLNodes.put(mapDivId, dummyInfo);
     }
 
+    //mapCtrl.mPluginLayout.updateViewPosition(mapId);
 
-
-    activity.runOnUiThread(new Runnable() {
-      @Override
-      public void run() {
-
-        if(mapCtrl.mPluginLayout == null || mapDivId == null) {
-            callbackContext.success();
-            return;
-        }
-
-        RectF drawRect = mapCtrl.mPluginLayout.HTMLNodeRectFs.get(mapDivId);
-
-        //Log.d(TAG, "--->mapDivId = " + mapDivId + ", drawRect = " + drawRect);
-        if (drawRect != null) {
-          final int scrollY = webView.getView().getScrollY();
-
-          int width = (int) drawRect.width();
-          int height = (int) drawRect.height();
-          int x = (int) drawRect.left;
-          int y = (int) drawRect.top + scrollY;
-          ViewGroup.LayoutParams lParams = mapView.getLayoutParams();
-          FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) lParams;
-
-          params.width = width;
-          params.height = height;
-          params.leftMargin = x;
-          params.topMargin = y;
-          mapView.setLayoutParams(params);
-
-          callbackContext.success();
-        }
-      }
-    });
+    //mapCtrl.mPluginLayout.inValidate();
+    callbackContext.success();
   }
 
   public void setDiv(JSONArray args, CallbackContext callbackContext) throws JSONException {
     if (args.length() == 0) {
       PluginMap.this.mapDivId = null;
-      mapCtrl.mPluginLayout.removePluginOverlay(mapId);
+      mapCtrl.mPluginLayout.removePluginMap(mapId);
       callbackContext.success();
       return;
     }
     PluginMap.this.mapDivId = args.getString(0);
-    mapCtrl.mPluginLayout.addPluginOverlay(PluginMap.this);
+    mapCtrl.mPluginLayout.addPluginMap(PluginMap.this);
     this.resizeMap(args, callbackContext);
   }
 
@@ -805,8 +622,7 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
   @Override
   public void onDestroy() {
     super.onDestroy();
-    this.objects.clear();
-    this.objects.destroy();
+    //this.remove(null, null);
   }
 
   /**
@@ -826,7 +642,7 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
           cordova.getActivity().runOnUiThread(new Runnable() {
             @Override
             public void run() {
-              mapCtrl.mPluginLayout.removePluginOverlay(mapId);
+              mapCtrl.mPluginLayout.removePluginMap(mapId);
 
               //Log.d("pluginMap", "--> map = " + map);
               if (map != null) {
@@ -849,8 +665,6 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
                   map.setOnMyLocationButtonClickListener(null);
                   map.setOnMapLoadedCallback(null);
                   map.setOnMarkerDragListener(null);
-                  map.setOnMyLocationClickListener(null);
-                  map.setOnPoiClickListener(null);
                 } catch (SecurityException e) {
                   e.printStackTrace();
                 }
@@ -866,20 +680,18 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
                   e.printStackTrace();
                 }
               }
-              if (plugins.size() > 0) {
-                String[] pluginNames = plugins.keySet().toArray(new String[plugins.size()]);
-                PluginEntry pluginEntry;
-                for (int i = 0; i < pluginNames.length; i++) {
-                  pluginEntry = plugins.remove(pluginNames[i]);
-                  if (pluginEntry == null) {
-                    continue;
-                  }
-                  pluginEntry.plugin.onDestroy();
-                  ((MyPlugin)pluginEntry.plugin).map = null;
-                  ((MyPlugin)pluginEntry.plugin).mapCtrl = null;
-                  //((MyPlugin)pluginEntry.plugin).pluginMap = null; // Do not clear at here.
-                  pluginEntry = null;
+              String[] pluginNames = plugins.keySet().toArray(new String[plugins.size()]);
+              PluginEntry pluginEntry;
+              for (int i = 0; i < pluginNames.length; i++) {
+                pluginEntry = plugins.remove(pluginNames[i]);
+                if (pluginEntry == null) {
+                  continue;
                 }
+                pluginEntry.plugin.onDestroy();
+                ((MyPlugin)pluginEntry.plugin).map = null;
+                ((MyPlugin)pluginEntry.plugin).mapCtrl = null;
+                //((MyPlugin)pluginEntry.plugin).pluginMap = null; // Do not clear at here.
+                pluginEntry = null;
               }
               //Log.d("pluginMap", "--> mapView = " + mapView);
               projection = null;
@@ -965,56 +777,52 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
     int maxWidth = 0;
 
     if (styles != null) {
-      if (styles.has("width")) {
-        try {
-          int width = 0;
-          String widthString = styles.getString("width");
+      try {
+        int width = 0;
+        String widthString = styles.getString("width");
 
-          if (widthString.endsWith("%")) {
-            double widthDouble = Double.parseDouble(widthString.replace("%", ""));
+        if (widthString.endsWith("%")) {
+          double widthDouble = Double.parseDouble(widthString.replace ("%", ""));
 
-            width = (int) ((double) mapView.getWidth() * (widthDouble / 100));
-          } else if (PluginUtil.isNumeric(widthString)) {
-            double widthDouble = Double.parseDouble(widthString);
+          width = (int)((double)mapView.getWidth() * (widthDouble / 100));
+        } else if (PluginUtil.isNumeric(widthString)) {
+          double widthDouble = Double.parseDouble(widthString);
 
-            if (widthDouble <= 1.0) {  // for percentage values (e.g. 0.5 = 50%).
-              width = (int) ((double) mapView.getWidth() * (widthDouble));
-            } else {
-              width = (int) widthDouble;
-            }
+          if (widthDouble <= 1.0) {	// for percentage values (e.g. 0.5 = 50%).
+            width = (int)((double)mapView.getWidth() * (widthDouble));
+          } else {
+            width = (int)widthDouble;
           }
-
-          if (width > 0) {
-            layoutParams.width = width;
-          }
-        } catch (Exception e) {
-          e.printStackTrace();
         }
+
+        if (width > 0) {
+          layoutParams.width = width;
+        }
+      } catch (Exception e) {
+        e.printStackTrace();
       }
 
-      if (styles.has("maxWidth")) {
-        try {
-          String widthString = styles.getString("maxWidth");
+      try {
+        String widthString = styles.getString("maxWidth");
 
-          if (widthString.endsWith("%")) {
-            double widthDouble = Double.parseDouble(widthString.replace("%", ""));
+        if (widthString.endsWith("%")) {
+          double widthDouble = Double.parseDouble(widthString.replace ("%", ""));
 
-            maxWidth = (int) ((double) mapView.getWidth() * (widthDouble / 100));
+          maxWidth = (int)((double)mapView.getWidth() * (widthDouble / 100));
 
-            // make sure to take padding into account.
-            maxWidth -= (windowLayer.getPaddingLeft() + windowLayer.getPaddingRight());
-          } else if (PluginUtil.isNumeric(widthString)) {
-            double widthDouble = Double.parseDouble(widthString);
+          // make sure to take padding into account.
+          maxWidth -= (windowLayer.getPaddingLeft() + windowLayer.getPaddingRight());
+        } else if (PluginUtil.isNumeric(widthString)) {
+          double widthDouble = Double.parseDouble(widthString);
 
-            if (widthDouble <= 1.0) {  // for percentage values (e.g. 0.5 = 50%).
-              maxWidth = (int) ((double) mapView.getWidth() * (widthDouble));
-            } else {
-              maxWidth = (int) widthDouble;
-            }
+          if (widthDouble <= 1.0) {	// for percentage values (e.g. 0.5 = 50%).
+            maxWidth = (int)((double)mapView.getWidth() * (widthDouble));
+          } else {
+            maxWidth = (int)widthDouble;
           }
-        } catch (Exception e) {
-          e.printStackTrace();
         }
+      } catch (Exception e) {
+        e.printStackTrace();
       }
     }
 
@@ -1027,28 +835,26 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
     int textAlignment = View.TEXT_ALIGNMENT_GRAVITY;
 
     if (styles != null) {
-      if (styles.has("text-align")) {
-        try {
-          String textAlignValue = styles.getString("text-align");
+      try {
+        String textAlignValue = styles.getString("text-align");
 
-          switch (TEXT_STYLE_ALIGNMENTS.valueOf(textAlignValue)) {
-            case left:
-              gravity = Gravity.LEFT;
-              textAlignment = View.TEXT_ALIGNMENT_GRAVITY;
-              break;
-            case center:
-              gravity = Gravity.CENTER;
-              textAlignment = View.TEXT_ALIGNMENT_CENTER;
-              break;
-            case right:
-              gravity = Gravity.RIGHT;
-              textAlignment = View.TEXT_ALIGNMENT_VIEW_END;
-              break;
-          }
-
-        } catch (Exception e) {
-          e.printStackTrace();
+        switch(TEXT_STYLE_ALIGNMENTS.valueOf(textAlignValue)) {
+          case left:
+            gravity = Gravity.LEFT;
+            textAlignment = View.TEXT_ALIGNMENT_GRAVITY;
+            break;
+          case center:
+            gravity = Gravity.CENTER;
+            textAlignment = View.TEXT_ALIGNMENT_CENTER;
+            break;
+          case right:
+            gravity = Gravity.RIGHT;
+            textAlignment = View.TEXT_ALIGNMENT_VIEW_END;
+            break;
         }
+
+      } catch (Exception e) {
+        e.printStackTrace();
       }
     }
 
@@ -1091,23 +897,19 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
         //----------------------------------------
         int fontStyle = Typeface.NORMAL;
         if (styles != null) {
-          if (styles.has("font-style")) {
-            try {
-              if ("italic".equals(styles.getString("font-style"))) {
-                fontStyle = Typeface.ITALIC;
-              }
-            } catch (JSONException e) {
-              e.printStackTrace();
+          try {
+            if ("italic".equals(styles.getString("font-style"))) {
+              fontStyle = Typeface.ITALIC;
             }
+          } catch (JSONException e) {
+            e.printStackTrace();
           }
-          if (styles.has("font-weight")) {
-            try {
-              if ("bold".equals(styles.getString("font-weight"))) {
-                fontStyle = fontStyle | Typeface.BOLD;
-              }
-            } catch (JSONException e) {
-              e.printStackTrace();
+          try {
+            if ("bold".equals(styles.getString("font-weight"))) {
+              fontStyle = fontStyle | Typeface.BOLD;
             }
+          } catch (JSONException e) {
+            e.printStackTrace();
           }
         }
         textView.setTypeface(Typeface.DEFAULT, fontStyle);
@@ -1196,227 +998,210 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
    * @throws JSONException
    */
   public void setOptions(final JSONArray args, final CallbackContext callbackContext) throws JSONException {
+    final AsyncTask<Void, Void, AsyncSetOptionsResult> task = new AsyncTask<Void, Void, AsyncSetOptionsResult>() {
+      private Exception mException = null;
+      @Override
+      protected AsyncSetOptionsResult doInBackground(Void... Void) {
+        AsyncSetOptionsResult results = new AsyncSetOptionsResult();
+        results.cameraPadding = DEFAULT_CAMERA_PADDING;
+
+        try {
+          JSONObject params = args.getJSONObject(0);
+
+          if (params.has("styles")) {
+            results.styles = params.getString("styles");
+          } else {
+            // map type
+            results.MAP_TYPE_ID = -1;
+            if (!params.has("styles") && params.has("mapType")) {
+              String typeStr = params.getString("mapType");
+              results.MAP_TYPE_ID = typeStr.equals("MAP_TYPE_NORMAL") ? GoogleMap.MAP_TYPE_NORMAL : results.MAP_TYPE_ID;
+              results.MAP_TYPE_ID = typeStr.equals("MAP_TYPE_HYBRID") ? GoogleMap.MAP_TYPE_HYBRID : results.MAP_TYPE_ID;
+              results.MAP_TYPE_ID = typeStr.equals("MAP_TYPE_SATELLITE") ? GoogleMap.MAP_TYPE_SATELLITE : results.MAP_TYPE_ID;
+              results.MAP_TYPE_ID = typeStr.equals("MAP_TYPE_TERRAIN") ? GoogleMap.MAP_TYPE_TERRAIN : results.MAP_TYPE_ID;
+              results.MAP_TYPE_ID = typeStr.equals("MAP_TYPE_NONE") ? GoogleMap.MAP_TYPE_NONE : results.MAP_TYPE_ID;
+            }
+          }
 
 
-    final AsyncSetOptionsResult results = new AsyncSetOptionsResult();
-    results.cameraPadding = DEFAULT_CAMERA_PADDING;
+          // move the camera position
+          if (params.has("camera")) {
+            LatLngBounds cameraBounds = null;
+            JSONObject camera = params.getJSONObject("camera");
+            Builder builder = CameraPosition.builder();
+            if (camera.has("bearing")) {
+              builder.bearing((float) camera.getDouble("bearing"));
+            }
+            if (camera.has("latLng")) {
+              JSONObject latLng = camera.getJSONObject("latLng");
+              builder.target(new LatLng(latLng.getDouble("lat"), latLng.getDouble("lng")));
+            }
 
-    try {
-      JSONObject params = args.getJSONObject(0);
+            if (camera.has("padding")) {
+              results.cameraPadding = camera.getDouble("padding");
+            }
 
-      if (params.has("styles")) {
-        results.styles = params.getString("styles");
-      } else {
-        // map type
-        results.MAP_TYPE_ID = -1;
-        if (!params.has("styles") && params.has("mapType")) {
-          String typeStr = params.getString("mapType");
-          results.MAP_TYPE_ID = typeStr.equals("MAP_TYPE_NORMAL") ? GoogleMap.MAP_TYPE_NORMAL : results.MAP_TYPE_ID;
-          results.MAP_TYPE_ID = typeStr.equals("MAP_TYPE_HYBRID") ? GoogleMap.MAP_TYPE_HYBRID : results.MAP_TYPE_ID;
-          results.MAP_TYPE_ID = typeStr.equals("MAP_TYPE_SATELLITE") ? GoogleMap.MAP_TYPE_SATELLITE : results.MAP_TYPE_ID;
-          results.MAP_TYPE_ID = typeStr.equals("MAP_TYPE_TERRAIN") ? GoogleMap.MAP_TYPE_TERRAIN : results.MAP_TYPE_ID;
-          results.MAP_TYPE_ID = typeStr.equals("MAP_TYPE_NONE") ? GoogleMap.MAP_TYPE_NONE : results.MAP_TYPE_ID;
+            if (camera.has("target")) {
+              Object target = camera.get("target");
+              @SuppressWarnings("rawtypes")
+              Class targetClass = target.getClass();
+              if ("org.json.JSONArray".equals(targetClass.getName())) {
+                JSONArray points = camera.getJSONArray("target");
+                cameraBounds = PluginUtil.JSONArray2LatLngBounds(points);
+                builder.target(cameraBounds.getCenter());
+
+              } else {
+                JSONObject latLng = camera.getJSONObject("target");
+                builder.target(new LatLng(latLng.getDouble("lat"), latLng.getDouble("lng")));
+              }
+            }
+            if (camera.has("tilt")) {
+              builder.tilt((float) camera.getDouble("tilt"));
+            }
+            if (camera.has("zoom")) {
+              builder.zoom((float) camera.getDouble("zoom"));
+            }
+            results.cameraPosition = builder.build();
+            results.cameraBounds = cameraBounds;
+
+          }
+
+        } catch (Exception e) {
+          mException = e;
+          this.cancel(true);
+          return null;
         }
+
+        return results;
       }
 
-
-      // move the camera position
-      if (params.has("camera")) {
-        LatLngBounds cameraBounds = null;
-        JSONObject camera = params.getJSONObject("camera");
-        Builder builder = CameraPosition.builder();
-        if (camera.has("bearing")) {
-          builder.bearing((float) camera.getDouble("bearing"));
-        }
-        if (camera.has("latLng")) {
-          JSONObject latLng = camera.getJSONObject("latLng");
-          builder.target(new LatLng(latLng.getDouble("lat"), latLng.getDouble("lng")));
+      @Override
+      public void onCancelled() {
+        if (mException != null) {
+          mException.printStackTrace();
+          callbackContext.error("" + mException.getMessage());
+        } else {
+          callbackContext.error("");
         }
 
-        if (camera.has("padding")) {
-          results.cameraPadding = camera.getDouble("padding");
-        }
+      }
 
-        if (camera.has("target")) {
-          Object target = camera.get("target");
-          @SuppressWarnings("rawtypes")
-          Class targetClass = target.getClass();
-          if ("org.json.JSONArray".equals(targetClass.getName())) {
-            JSONArray points = camera.getJSONArray("target");
-            cameraBounds = PluginUtil.JSONArray2LatLngBounds(points);
-            builder.target(cameraBounds.getCenter());
-
-          } else {
-            JSONObject latLng = camera.getJSONObject("target");
-            builder.target(new LatLng(latLng.getDouble("lat"), latLng.getDouble("lng")));
+      @Override
+      public void onPostExecute(AsyncSetOptionsResult results) {
+        if (results.cameraPosition != null) {
+          try {
+              map.moveCamera(CameraUpdateFactory.newCameraPosition(results.cameraPosition));
+          } catch (Exception e) {
+              e.printStackTrace();
+          }
+          if (results.cameraBounds != null) {
+            fitBounds(results.cameraBounds, (int)(results.cameraPadding * density));
           }
         }
-        if (camera.has("tilt")) {
-          builder.tilt((float) camera.getDouble("tilt"));
+
+        //styles
+        if (results.styles != null) {
+          MapStyleOptions styleOptions = new MapStyleOptions(results.styles);
+          map.setMapStyle(styleOptions);
+          map.setMapType(GoogleMap.MAP_TYPE_NORMAL);
+        } else if (results.MAP_TYPE_ID != -1) {
+          map.setMapType(results.MAP_TYPE_ID);
         }
-        if (camera.has("zoom")) {
-          builder.zoom((float) camera.getDouble("zoom"));
-        }
-        results.cameraPosition = builder.build();
-        results.cameraBounds = cameraBounds;
-
-      }
 
 
+        JSONObject params = null;
+        try {
+          params = args.getJSONObject(0);
+          UiSettings settings = map.getUiSettings();
 
+          //preferences
+          if (params.has("preferences")) {
+            JSONObject preferences = params.getJSONObject("preferences");
 
-      cordova.getActivity().runOnUiThread(new Runnable() {
-        @Override
-        public void run() {
-          try {
-
-            if (results.cameraPosition != null) {
-              try {
-                map.moveCamera(CameraUpdateFactory.newCameraPosition(results.cameraPosition));
-              } catch (Exception e) {
-                e.printStackTrace();
+            if (preferences.has("padding")) {
+              JSONObject padding = preferences.getJSONObject("padding");
+              int left = 0, top = 0, bottom = 0, right = 0;
+              if (padding.has("left")) {
+                left = (int) (padding.getInt("left") * density);
               }
-              if (results.cameraBounds != null) {
-                fitBounds(results.cameraBounds, (int)(results.cameraPadding / density));
+              if (padding.has("top")) {
+                top = (int) (padding.getInt("top") * density);
               }
+              if (padding.has("bottom")) {
+                bottom = (int) (padding.getInt("bottom") * density);
+              }
+              if (padding.has("right")) {
+                right = (int) (padding.getInt("right") * density);
+              }
+              map.setPadding(left, top, right, bottom);
             }
 
-            //styles
-            if (results.styles != null) {
-              MapStyleOptions styleOptions = new MapStyleOptions(results.styles);
-              map.setMapStyle(styleOptions);
-              map.setMapType(GoogleMap.MAP_TYPE_NORMAL);
-            } else if (results.MAP_TYPE_ID != -1) {
-              map.setMapType(results.MAP_TYPE_ID);
-            }
-
-            JSONObject params = null;
-            params = args.getJSONObject(0);
-            UiSettings settings = map.getUiSettings();
-
-            //preferences
-            if (params.has("preferences")) {
-              JSONObject preferences = params.getJSONObject("preferences");
-
-              if (preferences.has("padding")) {
-                JSONObject padding = preferences.getJSONObject("padding");
-                int left = 0, top = 0, bottom = 0, right = 0;
-                if (padding.has("left")) {
-                  left = (int) (padding.getInt("left") * density);
-                }
-                if (padding.has("top")) {
-                  top = (int) (padding.getInt("top") * density);
-                }
-                if (padding.has("bottom")) {
-                  bottom = (int) (padding.getInt("bottom") * density);
-                }
-                if (padding.has("right")) {
-                  right = (int) (padding.getInt("right") * density);
-                }
-                map.setPadding(left, top, right, bottom);
-
-                FrameLayout.LayoutParams lParams2 = (FrameLayout.LayoutParams) dummyMyLocationButton.getLayoutParams();
-                lParams2.rightMargin = right + (int)(5 * density);
-                lParams2.topMargin = top + (int)(5 * density);
-                dummyMyLocationButton.setLayoutParams(lParams2);
+            if (preferences.has("zoom")) {
+              JSONObject zoom = preferences.getJSONObject("zoom");
+              if (zoom.has("minZoom")) {
+                map.setMinZoomPreference((float)zoom.getDouble("minZoom"));
               }
-
-              if (preferences.has("zoom")) {
-                JSONObject zoom = preferences.getJSONObject("zoom");
-                if (zoom.has("minZoom")) {
-                  map.setMinZoomPreference((float)zoom.getDouble("minZoom"));
-                }
-                if (zoom.has("maxZoom")) {
-                  map.setMaxZoomPreference((float)zoom.getDouble("maxZoom"));
-                }
-              }
-
-
-              if (preferences.has("gestureBounds")) {
-                Object target = preferences.get("gestureBounds");
-                @SuppressWarnings("rawtypes")
-                Class targetClass = target.getClass();
-                if ("org.json.JSONArray".equals(targetClass.getName())) {
-                  JSONArray points = preferences.getJSONArray("gestureBounds");
-                  if (points.length() > 0) {
-                    LatLngBounds bounds = PluginUtil.JSONArray2LatLngBounds(points);
-                    map.setLatLngBoundsForCameraTarget(bounds);
-                  } else {
-                    map.setLatLngBoundsForCameraTarget(null);
-                  }
-                }
-              }
-
-            }
-
-            //gestures
-            if (params.has("gestures")) {
-              JSONObject gestures = params.getJSONObject("gestures");
-
-              if (gestures.has("tilt")) {
-                settings.setTiltGesturesEnabled(gestures.getBoolean("tilt"));
-              }
-              if (gestures.has("scroll")) {
-                settings.setScrollGesturesEnabled(gestures.getBoolean("scroll"));
-              }
-              if (gestures.has("rotate")) {
-                settings.setRotateGesturesEnabled(gestures.getBoolean("rotate"));
-              }
-              if (gestures.has("zoom")) {
-                settings.setZoomGesturesEnabled(gestures.getBoolean("zoom"));
+              if (zoom.has("maxZoom")) {
+                map.setMaxZoomPreference((float)zoom.getDouble("maxZoom"));
               }
             }
+          }
 
-            //controls
-            if (params.has("controls")) {
-              final JSONObject controls = params.getJSONObject("controls");
+          //gestures
+          if (params.has("gestures")) {
+            JSONObject gestures = params.getJSONObject("gestures");
 
-              if (controls.has("compass")) {
-                settings.setCompassEnabled(controls.getBoolean("compass"));
-              }
-              if (controls.has("zoom")) {
-                settings.setZoomControlsEnabled(controls.getBoolean("zoom"));
-              }
-              if (controls.has("indoorPicker")) {
-                settings.setIndoorLevelPickerEnabled(controls.getBoolean("indoorPicker"));
-              }
-              if (controls.has("mapToolbar")) {
-                settings.setMapToolbarEnabled(controls.getBoolean("mapToolbar"));
-              }
-              if (controls.has("myLocation") || controls.has("myLocationButton")) {
-                cordova.getThreadPool().submit(new Runnable() {
-                  @Override
-                  public void run() {
-                    JSONArray args = new JSONArray();
-                    args.put(controls);
-                    try {
-                      PluginMap.this.setMyLocationEnabled(args, callbackContext);
-                    } catch (JSONException e) {
-                      e.printStackTrace();
-                      callbackContext.error("error at map.setOptions()");
-                    }
-                  }
-                });
-              } else {
-                callbackContext.success();
-              }
+            if (gestures.has("tilt")) {
+              settings.setTiltGesturesEnabled(gestures.getBoolean("tilt"));
+            }
+            if (gestures.has("scroll")) {
+              settings.setScrollGesturesEnabled(gestures.getBoolean("scroll"));
+            }
+            if (gestures.has("rotate")) {
+              settings.setRotateGesturesEnabled(gestures.getBoolean("rotate"));
+            }
+            if (gestures.has("zoom")) {
+              settings.setZoomGesturesEnabled(gestures.getBoolean("zoom"));
+            }
+          }
+
+          //controls
+          if (params.has("controls")) {
+            JSONObject controls = params.getJSONObject("controls");
+
+            if (controls.has("compass")) {
+              settings.setCompassEnabled(controls.getBoolean("compass"));
+            }
+            if (controls.has("zoom")) {
+              settings.setZoomControlsEnabled(controls.getBoolean("zoom"));
+            }
+            if (controls.has("indoorPicker")) {
+              settings.setIndoorLevelPickerEnabled(controls.getBoolean("indoorPicker"));
+            }
+            if (controls.has("mapToolbar")) {
+              settings.setMapToolbarEnabled(controls.getBoolean("mapToolbar"));
+            }
+            if (controls.has("myLocationButton")) {
+              boolean isEnabled = controls.getBoolean("myLocationButton");
+              settings.setMyLocationButtonEnabled(isEnabled);
+
+              JSONArray args = new JSONArray();
+              args.put(isEnabled);
+              PluginMap.this.setMyLocationEnabled(args, callbackContext);
             } else {
               callbackContext.success();
             }
-          } catch (Exception e) {
-            e.printStackTrace();
-            callbackContext.error("error at map.setOptions()");
-
+          } else {
+            callbackContext.success();
           }
+
+        } catch (JSONException e) {
+          e.printStackTrace();
+          callbackContext.error("" + e.getMessage());
         }
-      });
-
-    } catch (Exception e) {
-      e.printStackTrace();
-      callbackContext.error("error at map.setOptions()");
-    }
-
-
+      }
+    };
+    task.execute();
 
   }
 
@@ -1535,205 +1320,195 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
       public void run() {
 
         final CameraPosition.Builder builder = CameraPosition.builder(map.getCameraPosition());
-        UpdateCameraAction cameraAction = new UpdateCameraAction(callbackContext, cameraPos, builder, action);
-        cameraAction.execute();
+
+        AsyncTask<Void, Void, AsyncUpdateCameraPositionResult> createCameraUpdate = new AsyncTask<Void, Void, AsyncUpdateCameraPositionResult>() {
+          private Exception mException = null;
+
+          @Override
+          protected AsyncUpdateCameraPositionResult doInBackground(Void... voids) {
+            AsyncUpdateCameraPositionResult result = new AsyncUpdateCameraPositionResult();
+            if (isRemoved) {
+              this.cancel(true);
+              return null;
+            }
+
+            try {
+
+              result.durationMS = 4000;
+              result.cameraPadding = DEFAULT_CAMERA_PADDING;
+              if (cameraPos.has("tilt")) {
+                builder.tilt((float) cameraPos.getDouble("tilt"));
+              }
+              if (cameraPos.has("bearing")) {
+                builder.bearing((float) cameraPos.getDouble("bearing"));
+              }
+              if (cameraPos.has("zoom")) {
+                builder.zoom((float) cameraPos.getDouble("zoom"));
+              }
+              if (cameraPos.has("duration")) {
+                result.durationMS = cameraPos.getInt("duration");
+              }
+              if (cameraPos.has("padding")) {
+                result.cameraPadding = cameraPos.getDouble("padding");
+              }
+
+              if (!cameraPos.has("target")) {
+                return result;
+              }
+
+              //------------------------
+              // Create a cameraUpdate
+              //------------------------
+              result.cameraUpdate = null;
+              result.cameraBounds = null;
+              CameraPosition newPosition;
+              Object target = cameraPos.get("target");
+              @SuppressWarnings("rawtypes")
+              Class targetClass = target.getClass();
+              JSONObject latLng;
+              if ("org.json.JSONArray".equals(targetClass.getName())) {
+                JSONArray points = cameraPos.getJSONArray("target");
+                result.cameraBounds = PluginUtil.JSONArray2LatLngBounds(points);
+                result.cameraUpdate = CameraUpdateFactory.newLatLngBounds(result.cameraBounds, (int)(result.cameraPadding * density));
+              } else {
+                latLng = cameraPos.getJSONObject("target");
+                builder.target(new LatLng(latLng.getDouble("lat"), latLng.getDouble("lng")));
+                newPosition = builder.build();
+                result.cameraUpdate = CameraUpdateFactory.newCameraPosition(newPosition);
+              }
+            } catch (Exception e) {
+              mException = e;
+              e.printStackTrace();
+              this.cancel(true);
+              return null;
+            }
+
+            return result;
+          }
+
+          @Override
+          public void onCancelled() {
+            if (mException != null) {
+              mException.printStackTrace();
+            }
+            callbackContext.error(mException != null ? mException.getMessage() + "" : "");
+          }
+          @Override
+          public void onCancelled(AsyncUpdateCameraPositionResult AsyncUpdateCameraPositionResult) {
+            if (mException != null) {
+              mException.printStackTrace();
+            }
+            callbackContext.error(mException != null ? mException.getMessage() + "" : "");
+          }
+
+          @Override
+          public void onPostExecute(AsyncUpdateCameraPositionResult AsyncUpdateCameraPositionResult) {
+            if (isRemoved) {
+              return;
+            }
+
+
+            if (AsyncUpdateCameraPositionResult.cameraUpdate == null) {
+              CameraPosition.Builder builder = CameraPosition.builder(map.getCameraPosition());
+              builder.target(map.getCameraPosition().target);
+              AsyncUpdateCameraPositionResult.cameraUpdate = CameraUpdateFactory.newCameraPosition(builder.build());
+            }
+
+            final AsyncUpdateCameraPositionResult finalCameraPosition = AsyncUpdateCameraPositionResult;
+            PluginUtil.MyCallbackContext myCallback = new PluginUtil.MyCallbackContext("moveCamera", webView) {
+              @Override
+              public void onResult(final PluginResult pluginResult) {
+                if (finalCameraPosition.cameraBounds != null && ANIMATE_CAMERA_DONE.equals(pluginResult.getStrMessage())) {
+
+
+                  final Builder builder = CameraPosition.builder(map.getCameraPosition());
+                  if (cameraPos.has("tilt")) {
+                    try {
+                      builder.tilt((float) cameraPos.getDouble("tilt"));
+                    } catch (JSONException e) {
+                      e.printStackTrace();
+                    }
+                  }
+                  if (cameraPos.has("bearing")) {
+                    try {
+                      builder.bearing((float) cameraPos.getDouble("bearing"));
+                    } catch (JSONException e) {
+                      e.printStackTrace();
+                    }
+                  }
+
+                  CameraUpdate cameraUpdate = CameraUpdateFactory.newLatLngBounds(finalCameraPosition.cameraBounds, (int)(finalCameraPosition.cameraPadding * density));
+                  try {
+                    map.moveCamera(cameraUpdate);
+                  } catch (Exception e) {
+                    e.printStackTrace();
+                  }
+                  map.setOnCameraIdleListener(new GoogleMap.OnCameraIdleListener() {
+                    @Override
+                    public void onCameraIdle() {
+                      PluginMap.this.onCameraIdle();
+                      map.setOnCameraIdleListener(PluginMap.this);
+                      builder.zoom(map.getCameraPosition().zoom);
+                      builder.target(map.getCameraPosition().target);
+                      map.moveCamera(CameraUpdateFactory.newCameraPosition(builder.build()));
+                    }
+                  });
+                } else {
+                  final Builder builder = CameraPosition.builder(map.getCameraPosition());
+                  if (cameraPos.has("tilt")) {
+                    try {
+                      builder.tilt((float) cameraPos.getDouble("tilt"));
+                    } catch (JSONException e) {
+                      e.printStackTrace();
+                    }
+                  }
+                  if (cameraPos.has("bearing")) {
+                    try {
+                      builder.bearing((float) cameraPos.getDouble("bearing"));
+                    } catch (JSONException e) {
+                      e.printStackTrace();
+                    }
+                  }
+
+                  try {
+                    map.moveCamera(finalCameraPosition.cameraUpdate);
+                  } catch (Exception e) {
+                    e.printStackTrace();
+                  }
+
+                  builder.zoom(map.getCameraPosition().zoom);
+                  builder.target(map.getCameraPosition().target);
+
+                  map.setOnCameraIdleListener(new GoogleMap.OnCameraIdleListener() {
+                    @Override
+                    public void onCameraIdle() {
+                      PluginMap.this.onCameraIdle();
+                      map.setOnCameraIdleListener(PluginMap.this);
+                      builder.zoom(map.getCameraPosition().zoom);
+                      builder.target(map.getCameraPosition().target);
+                      map.moveCamera(CameraUpdateFactory.newCameraPosition(builder.build()));
+                    }
+                  });
+                }
+                callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.OK));
+              }
+            };
+            if (action.equals("moveCamera")) {
+              myMoveCamera(AsyncUpdateCameraPositionResult.cameraUpdate, myCallback);
+            } else {
+              myAnimateCamera(mapId, AsyncUpdateCameraPositionResult.cameraUpdate, AsyncUpdateCameraPositionResult.durationMS, myCallback);
+            }
+
+          }
+        };
+        createCameraUpdate.execute();
 
       }
     });
 
-  }
-
-  private class UpdateCameraAction extends AsyncTask<Void, Void, AsyncUpdateCameraPositionResult> {
-    private Exception mException = null;
-    private CallbackContext mCallbackContext;
-    private JSONObject mCameraPos;
-    private CameraPosition.Builder mBuilder;
-    private String mAction;
-
-    UpdateCameraAction(CallbackContext callbackContext, JSONObject cameraPos, CameraPosition.Builder builder, String action) {
-      super();
-      this.mCallbackContext = callbackContext;
-      this.mCameraPos = cameraPos;
-      this.mBuilder = builder;
-      this.mAction = action;
-    }
-
-    @Override
-    protected AsyncUpdateCameraPositionResult doInBackground(Void... voids) {
-      AsyncUpdateCameraPositionResult result = new AsyncUpdateCameraPositionResult();
-      if (isRemoved) {
-        this.cancel(true);
-        return null;
-      }
-
-      try {
-
-        result.durationMS = 4000;
-        result.cameraPadding = DEFAULT_CAMERA_PADDING;
-        if (mCameraPos.has("tilt")) {
-          mBuilder.tilt((float) mCameraPos.getDouble("tilt"));
-        }
-        if (mCameraPos.has("bearing")) {
-          mBuilder.bearing((float) mCameraPos.getDouble("bearing"));
-        }
-        if (mCameraPos.has("zoom")) {
-          mBuilder.zoom((float) mCameraPos.getDouble("zoom"));
-        }
-        if (mCameraPos.has("duration")) {
-          result.durationMS = mCameraPos.getInt("duration");
-        }
-        if (mCameraPos.has("padding")) {
-          result.cameraPadding = mCameraPos.getDouble("padding");
-        }
-
-        if (!mCameraPos.has("target")) {
-          return result;
-        }
-
-        //------------------------
-        // Create a cameraUpdate
-        //------------------------
-        result.cameraUpdate = null;
-        result.cameraBounds = null;
-        CameraPosition newPosition;
-        Object target = mCameraPos.get("target");
-        @SuppressWarnings("rawtypes")
-        Class targetClass = target.getClass();
-        JSONObject latLng;
-        if ("org.json.JSONArray".equals(targetClass.getName())) {
-          JSONArray points = mCameraPos.getJSONArray("target");
-          result.cameraBounds = PluginUtil.JSONArray2LatLngBounds(points);
-          result.cameraUpdate = CameraUpdateFactory.newLatLngBounds(result.cameraBounds, (int)(result.cameraPadding * density));
-        } else {
-          latLng = mCameraPos.getJSONObject("target");
-          mBuilder.target(new LatLng(latLng.getDouble("lat"), latLng.getDouble("lng")));
-          newPosition = mBuilder.build();
-          result.cameraUpdate = CameraUpdateFactory.newCameraPosition(newPosition);
-        }
-      } catch (Exception e) {
-        mException = e;
-        e.printStackTrace();
-        this.cancel(true);
-        return null;
-      }
-
-      return result;
-    }
-
-    @Override
-    public void onCancelled() {
-      if (mException != null) {
-        mException.printStackTrace();
-      }
-      mCallbackContext.error(mException != null ? mException.getMessage() + "" : "");
-    }
-    @Override
-    public void onCancelled(AsyncUpdateCameraPositionResult AsyncUpdateCameraPositionResult) {
-      if (mException != null) {
-        mException.printStackTrace();
-      }
-      mCallbackContext.error(mException != null ? mException.getMessage() + "" : "");
-    }
-
-    @Override
-    public void onPostExecute(AsyncUpdateCameraPositionResult AsyncUpdateCameraPositionResult) {
-      if (isRemoved) {
-        return;
-      }
 
 
-      if (AsyncUpdateCameraPositionResult.cameraUpdate == null) {
-        CameraPosition.Builder builder = CameraPosition.builder(map.getCameraPosition());
-        builder.target(map.getCameraPosition().target);
-        AsyncUpdateCameraPositionResult.cameraUpdate = CameraUpdateFactory.newCameraPosition(builder.build());
-      }
 
-      final AsyncUpdateCameraPositionResult finalCameraPosition = AsyncUpdateCameraPositionResult;
-      PluginUtil.MyCallbackContext myCallback = new PluginUtil.MyCallbackContext("moveCamera", webView) {
-        @Override
-        public void onResult(final PluginResult pluginResult) {
-          if (finalCameraPosition.cameraBounds != null && ANIMATE_CAMERA_DONE.equals(pluginResult.getStrMessage())) {
-
-
-            final Builder builder = CameraPosition.builder(map.getCameraPosition());
-            if (mCameraPos.has("tilt")) {
-              try {
-                builder.tilt((float) mCameraPos.getDouble("tilt"));
-              } catch (JSONException e) {
-                e.printStackTrace();
-              }
-            }
-            if (mCameraPos.has("bearing")) {
-              try {
-                builder.bearing((float) mCameraPos.getDouble("bearing"));
-              } catch (JSONException e) {
-                e.printStackTrace();
-              }
-            }
-
-            CameraUpdate cameraUpdate = CameraUpdateFactory.newLatLngBounds(finalCameraPosition.cameraBounds, (int)(finalCameraPosition.cameraPadding * density));
-            try {
-              map.moveCamera(cameraUpdate);
-            } catch (Exception e) {
-              e.printStackTrace();
-            }
-            map.setOnCameraIdleListener(new GoogleMap.OnCameraIdleListener() {
-              @Override
-              public void onCameraIdle() {
-                PluginMap.this.onCameraIdle();
-                map.setOnCameraIdleListener(PluginMap.this);
-                builder.zoom(map.getCameraPosition().zoom);
-                builder.target(map.getCameraPosition().target);
-                map.moveCamera(CameraUpdateFactory.newCameraPosition(builder.build()));
-              }
-            });
-          } else {
-            final Builder builder = CameraPosition.builder(map.getCameraPosition());
-            if (mCameraPos.has("tilt")) {
-              try {
-                builder.tilt((float) mCameraPos.getDouble("tilt"));
-              } catch (JSONException e) {
-                e.printStackTrace();
-              }
-            }
-            if (mCameraPos.has("bearing")) {
-              try {
-                builder.bearing((float) mCameraPos.getDouble("bearing"));
-              } catch (JSONException e) {
-                e.printStackTrace();
-              }
-            }
-
-            try {
-              map.moveCamera(finalCameraPosition.cameraUpdate);
-            } catch (Exception e) {
-              e.printStackTrace();
-            }
-
-            builder.zoom(map.getCameraPosition().zoom);
-            builder.target(map.getCameraPosition().target);
-
-            map.setOnCameraIdleListener(new GoogleMap.OnCameraIdleListener() {
-              @Override
-              public void onCameraIdle() {
-                PluginMap.this.onCameraIdle();
-                map.setOnCameraIdleListener(PluginMap.this);
-                builder.zoom(map.getCameraPosition().zoom);
-                builder.target(map.getCameraPosition().target);
-                map.moveCamera(CameraUpdateFactory.newCameraPosition(builder.build()));
-              }
-            });
-          }
-          mCallbackContext.sendPluginResult(new PluginResult(PluginResult.Status.OK));
-        }
-      };
-      if (mAction.equals("moveCamera")) {
-        myMoveCamera(AsyncUpdateCameraPositionResult.cameraUpdate, myCallback);
-      } else {
-        myAnimateCamera(mapId, AsyncUpdateCameraPositionResult.cameraUpdate, AsyncUpdateCameraPositionResult.durationMS, myCallback);
-      }
-
-    }
   }
 
   /**
@@ -1748,26 +1523,6 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
       @Override
       public void run() {
         myMoveCamera(CameraUpdateFactory.zoomTo(zoom), callbackContext);
-      }
-    });
-  }
-
-
-  /**
-   * Stop camera animation
-   * @param args
-   * @param callbackContext
-   * @throws JSONException
-   */
-  public void stopAnimation(JSONArray args, final CallbackContext callbackContext) throws JSONException {
-
-    this.activity.runOnUiThread(new Runnable() {
-      @Override
-      public void run() {
-        if(map != null) {
-          map.stopAnimation();
-        }
-        callbackContext.success();
       }
     });
   }
@@ -1823,6 +1578,12 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
     callbackContext.success();
   }
 
+  public void onRequestPermissionResult(int requestCode, String[] permissions,
+                                        int[] grantResults) throws JSONException {
+    synchronized (CordovaGoogleMaps.semaphore) {
+      CordovaGoogleMaps.semaphore.notify();
+    }
+  }
 
   /**
    * Enable MyLocation feature if set true
@@ -1832,64 +1593,38 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
    */
   public void setMyLocationEnabled(final JSONArray args, final CallbackContext callbackContext) throws JSONException {
 
-    final JSONObject params = args.getJSONObject(0);
-
-    boolean locationPermission = PermissionChecker.checkSelfPermission(cordova.getActivity(), Manifest.permission.ACCESS_COARSE_LOCATION) == PermissionChecker.PERMISSION_GRANTED;
-    //Log.d(TAG, "---> setMyLocationEnabled, hasPermission =  " + locationPermission);
+    // Request geolocation permission.
+    boolean locationPermission = cordova.hasPermission("android.permission.ACCESS_COARSE_LOCATION");
+    Log.d(TAG, "---> setMyLocationEnabled, hasPermission =  " + locationPermission);
 
     if (!locationPermission) {
       //_saveArgs = args;
       //_saveCallbackContext = callbackContext;
-      synchronized (semaphore) {
-        cordova.requestPermissions(this, callbackContext.hashCode(), new String[]{
-            Manifest.permission.ACCESS_FINE_LOCATION
-        });
+      cordova.requestPermissions(this, callbackContext.hashCode(), new String[]{"android.permission.ACCESS_FINE_LOCATION", "android.permission.ACCESS_COARSE_LOCATION"});
+      synchronized (CordovaGoogleMaps.semaphore) {
         try {
-          semaphore.wait();
+          CordovaGoogleMaps.semaphore.wait();
         } catch (InterruptedException e) {
           e.printStackTrace();
         }
       }
-      locationPermission = PermissionChecker.checkSelfPermission(cordova.getActivity(), Manifest.permission.ACCESS_FINE_LOCATION) == PermissionChecker.PERMISSION_GRANTED;
-
-      //Log.d(TAG, "---> (1720)setMyLocationEnabled, hasPermission =  " + locationPermission);
-
-      if (!locationPermission) {
-        callbackContext.error(PluginUtil.getPgmStrings(activity,"pgm_location_rejected_by_user"));
+      if (!cordova.hasPermission("android.permission.ACCESS_COARSE_LOCATION")) {
+        callbackContext.error("Geolocation permission request was denied.");
         return;
       }
 
     }
 
+    final Boolean isEnabled = args.getBoolean(0);
     this.activity.runOnUiThread(new Runnable() {
-      @SuppressLint("MissingPermission")
       @Override
       public void run() {
         try {
-
-          Boolean isMyLocationEnabled = false;
-          if (params.has("myLocation")) {
-            //Log.d(TAG, "--->myLocation = " + params.getBoolean("myLocation"));
-            isMyLocationEnabled = params.getBoolean("myLocation");
-            map.setMyLocationEnabled(isMyLocationEnabled);
-          }
-
-          Boolean isMyLocationButtonEnabled = false;
-          if (params.has("myLocationButton")) {
-            //Log.d(TAG, "--->myLocationButton = " + params.getBoolean("myLocationButton"));
-            isMyLocationButtonEnabled = params.getBoolean("myLocationButton");
-            map.getUiSettings().setMyLocationButtonEnabled(isMyLocationButtonEnabled);
-          }
-          //Log.d(TAG, "--->isMyLocationButtonEnabled = " + isMyLocationButtonEnabled + ", isMyLocationEnabled = " + isMyLocationEnabled);
-          if (!isMyLocationEnabled && isMyLocationButtonEnabled) {
-            dummyMyLocationButton.setVisibility(View.VISIBLE);
-          } else {
-            dummyMyLocationButton.setVisibility(View.GONE);
-          }
-
-        } catch (Exception e) {
+          map.setMyLocationEnabled(isEnabled);
+        } catch (SecurityException e) {
           e.printStackTrace();
         }
+        map.getUiSettings().setMyLocationButtonEnabled(isEnabled);
         callbackContext.success();
       }
     });
@@ -2107,23 +1842,30 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
 
           @Override
           public void onSnapshotReady(final Bitmap image) {
-            AsyncTask.execute(new Runnable() {
+
+            AsyncTask<Void, Void, String> task = new AsyncTask<Void, Void, String>() {
               @Override
-              public void run() {
+              protected String doInBackground(Void... voids) {
                 Bitmap image2 = image;
                 if (!finalUncompress) {
+                  float density = Resources.getSystem().getDisplayMetrics().density;
                   image2 = PluginUtil.resizeBitmap(image,
-                      (int) (image2.getWidth() * density),
-                      (int) (image2.getHeight() * density));
+                      (int) (image2.getWidth() / density),
+                      (int) (image2.getHeight() / density));
                 }
                 ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
                 image2.compress(Bitmap.CompressFormat.PNG, 100, outputStream);
                 byte[] byteArray = outputStream.toByteArray();
-
-                callbackContext.success("data:image/png;base64," +
-                    Base64.encodeToString(byteArray, Base64.NO_WRAP));
+                return "data:image/png;base64," +
+                    Base64.encodeToString(byteArray, Base64.NO_WRAP);
               }
-            });
+
+              @Override
+              public void onPostExecute(String imageEncoded) {
+                callbackContext.success(imageEncoded);
+              }
+            };
+            task.execute();
           }
         });
       }
@@ -2142,10 +1884,10 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
         Point point = projection.toScreenLocation(latLng);
         try {
           JSONArray pointJSON = new JSONArray();
-          pointJSON.put((int)((double)point.x / (double)density));
-          pointJSON.put((int)((double)point.y / (double)density));
+          pointJSON.put(point.x / density);
+          pointJSON.put(point.y / density);
           callbackContext.success(pointJSON);
-        } catch (Exception e) {
+        } catch (JSONException e) {
           e.printStackTrace();
           callbackContext.error(e.getMessage() + "");
         }
@@ -2215,12 +1957,6 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
       @Override
       public void run() {
         map.setPadding(left, top, right, bottom);
-
-        FrameLayout.LayoutParams lParams2 = (FrameLayout.LayoutParams) dummyMyLocationButton.getLayoutParams();
-        lParams2.rightMargin = right + (int)(5 * density);
-        lParams2.topMargin = top + (int)(5 * density);
-        dummyMyLocationButton.setLayoutParams(lParams2);
-
         callbackContext.success();
       }
     });
@@ -2365,7 +2101,6 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
 
   @Override
   public void onInfoWindowClose(Marker marker) {
-    //Log.d(TAG, "--->onInfoWindowClose");
     boolean useHtmlInfoWnd = marker.getTitle() == null &&
                              marker.getSnippet() == null;
     if (useHtmlInfoWnd) {
@@ -2377,15 +2112,13 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
       } else {
         this.onMarkerEvent("info_close", marker);
       }
-    } else {
-      this.onMarkerEvent("info_close", marker);
     }
     //activeMarker = null; // <-- This causes HTMLinfoWindow is not able to close when you tap on the map.
   }
 
   @Override
   public void onMapLoaded() {
-    this.onCameraEvent("camera_move_end");
+    this.onCameraEvent("camera_end");
   }
 
 
@@ -2409,8 +2142,8 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
     String tmp[] = markerTag.split("_");
     tmp = markerTag.split("-");
     String markerId = tmp[tmp.length - 1];
-    String js = String.format(Locale.ENGLISH, "javascript:if('%s' in plugin.google.maps){plugin.google.maps['%s']({evtName: '%s', callback:'_onMarkerEvent', args:['%s', new plugin.google.maps.LatLng(%f, %f)]});}",
-          mapId, mapId, eventName, markerId, latLng.latitude, latLng.longitude);
+    String js = String.format(Locale.ENGLISH, "javascript:if(window.cordova){cordova.fireDocumentEvent('%s', {evtName: '%s', callback:'_onMarkerEvent', args:['%s', new plugin.google.maps.LatLng(%f, %f)]});}",
+          mapId, eventName, markerId, latLng.latitude, latLng.longitude);
     jsCallback(js);
   }
   public void onClusterEvent(String eventName, Marker marker) {
@@ -2423,8 +2156,8 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
     String tmp[] = markerTag.split("-");
     String clusterId = tmp[0];
     String markerId = tmp[1];
-    String js = String.format(Locale.ENGLISH, "javascript:if('%s' in plugin.google.maps){plugin.google.maps['%s']({evtName: '%s', callback:'_onClusterEvent', args:['%s', '%s', new plugin.google.maps.LatLng(%f, %f)]});}",
-            mapId, mapId, eventName, clusterId, markerId, latLng.latitude, latLng.longitude);
+    String js = String.format(Locale.ENGLISH, "javascript:if(window.cordova){cordova.fireDocumentEvent('%s', {evtName: '%s', callback:'_onClusterEvent', args:['%s', '%s', new plugin.google.maps.LatLng(%f, %f)]});}",
+          mapId, eventName, clusterId, markerId, latLng.latitude, latLng.longitude);
     jsCallback(js);
   }
   public void syncInfoWndPosition() {
@@ -2435,30 +2168,30 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
     LatLng latLng = activeMarker.getPosition();
     Point point = projection.toScreenLocation(latLng);
 
-    String js = String.format(Locale.ENGLISH, "javascript:if('%s' in plugin.google.maps){plugin.google.maps['%s']({evtName: 'syncPosition', callback:'_onSyncInfoWndPosition', args:[{'x': %d, 'y': %d}]});}",
-        mapId, mapId, (int)(point.x / density), (int)(point.y / density));
+    String js = String.format(Locale.ENGLISH, "javascript:if(window.cordova){cordova.fireDocumentEvent('%s', {evtName: 'syncPosition', callback:'_onSyncInfoWndPosition', args:[{'x': %d, 'y': %d}]});}",
+        mapId, (int)(point.x / density), (int)(point.y / density));
     jsCallback(js);
   }
 
   public void onOverlayEvent(String eventName, String overlayId, LatLng point) {
-    String js = String.format(Locale.ENGLISH, "javascript:if('%s' in plugin.google.maps){plugin.google.maps['%s']({evtName: '%s', callback:'_onOverlayEvent', args:['%s', new plugin.google.maps.LatLng(%f, %f)]});}",
-        mapId, mapId, eventName, overlayId, point.latitude, point.longitude);
+    String js = String.format(Locale.ENGLISH, "javascript:if(window.cordova){cordova.fireDocumentEvent('%s', {evtName: '%s', callback:'_onOverlayEvent', args:['%s', new plugin.google.maps.LatLng(%f, %f)]});}",
+        mapId, eventName, overlayId, point.latitude, point.longitude);
     jsCallback(js);
   }
   public void onPolylineClick(Polyline polyline, LatLng point) {
-    String overlayId = "polyline_" + polyline.getTag();
+    String overlayId = "polyline_" + polyline.getId();
     this.onOverlayEvent("polyline_click", overlayId, point);
   }
   public void onPolygonClick(Polygon polygon, LatLng point) {
-    String overlayId = "polygon_" + polygon.getTag();
+    String overlayId = "polygon_" + polygon.getId();
     this.onOverlayEvent("polygon_click", overlayId, point);
   }
   public void onCircleClick(Circle circle, LatLng point) {
-    String overlayId = "circle_" + circle.getTag();
+    String overlayId = "circle_" + circle.getId();
     this.onOverlayEvent("circle_click", overlayId, point);
   }
   public void onGroundOverlayClick(GroundOverlay groundOverlay, LatLng point) {
-    String overlayId = "groundoverlay_" + groundOverlay.getTag();
+    String overlayId = groundOverlay.getTag() + "";
     this.onOverlayEvent("groundoverlay_click", overlayId, point);
   }
 
@@ -2467,8 +2200,8 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
    * @param eventName
    */
   public void onMapEvent(final String eventName) {
-    String js = String.format(Locale.ENGLISH, "javascript:if('%s' in plugin.google.maps){plugin.google.maps['%s']({evtName: '%s', callback:'_onMapEvent', args:[]});}",
-            mapId, mapId, eventName);
+    String js = String.format(Locale.ENGLISH, "javascript:if(window.cordova){cordova.fireDocumentEvent('%s', {evtName: '%s', callback:'_onMapEvent', args:[]});}",
+            mapId, eventName);
     jsCallback(js);
   }
 
@@ -2478,8 +2211,8 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
    * @param point
    */
   public void onMapEvent(final String eventName, final LatLng point) {
-    String js = String.format(Locale.ENGLISH, "javascript:if('%s' in plugin.google.maps){plugin.google.maps['%s']({evtName: '%s', callback:'_onMapEvent', args:[new plugin.google.maps.LatLng(%f, %f)]});}",
-        mapId, mapId, eventName, point.latitude, point.longitude);
+    String js = String.format(Locale.ENGLISH, "javascript:if(window.cordova){cordova.fireDocumentEvent('%s', {evtName: '%s', callback:'_onMapEvent', args:[new plugin.google.maps.LatLng(%f, %f)]});}",
+        mapId, eventName, point.latitude, point.longitude);
     jsCallback(js);
   }
 
@@ -2502,9 +2235,9 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
    *
    * @param points
    * @param point
-   * @return LatLng on the line
+   * @return
    */
-  private LatLng isPointOnTheLine(List<LatLng> points, LatLng point) {
+  private boolean isPointOnTheLine(List<LatLng> points, LatLng point) {
     double Sx, Sy;
     Point p0, p1, touchPoint;
     touchPoint = projection.toScreenLocation(point);
@@ -2515,11 +2248,11 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
       Sx = ((double)touchPoint.x - (double)p0.x) / ((double)p1.x - (double)p0.x);
       Sy = ((double)touchPoint.y - (double)p0.y) / ((double)p1.y - (double)p0.y);
       if (Math.abs(Sx - Sy) < 0.05 && Sx < 1 && Sx > 0) {
-        return points.get(i);
+        return true;
       }
       p0 = p1;
     }
-    return null;
+    return false;
   }
 
   /**
@@ -2529,38 +2262,15 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
    * @param points
    * @param point
    * @param threshold
-   * @return LatLng on the line
+   * @return boolean
    */
-  private LatLng isPointOnTheGeodesicLine(List<LatLng> points, final LatLng point, double threshold) {
-
+  private boolean isPointOnTheGeodesicLine(List<LatLng> points, LatLng point, double threshold) {
     double trueDistance, testDistance1, testDistance2;
-    Point p0, p1;
-    int fingerSize = (int)(20 * density); // assume finger size is 20px
+    Point p0, p1, touchPoint;
+    //touchPoint = new Point();
+    //touchPoint.x = (int) (point.latitude * 100000);
+    //touchPoint.y = (int) (point.longitude * 100000);
 
-    // clicked point(latlng) -> pixels
-    Point touchPoint = projection.toScreenLocation(point);
-    LatLngBounds possibleBounds = new LatLngBounds(point, point);
-    Point nePoint = new Point(touchPoint.x - fingerSize, touchPoint.y - fingerSize);
-    Point swPoint = new Point(touchPoint.x + fingerSize, touchPoint.y + fingerSize);
-
-    possibleBounds = possibleBounds.including(projection.fromScreenLocation(nePoint));
-    possibleBounds = possibleBounds.including(projection.fromScreenLocation(swPoint));
-
-    //--------------------------
-    // debug: draw rectangle
-    //--------------------------
-//    PolylineOptions polylineOptions = new PolylineOptions();
-//    polylineOptions.add(possibleBounds.northeast);
-//    polylineOptions.add(new LatLng(possibleBounds.northeast.latitude, possibleBounds.southwest.longitude));
-//    polylineOptions.add(possibleBounds.southwest);
-//    polylineOptions.add(new LatLng(possibleBounds.southwest.latitude, possibleBounds.northeast.longitude));
-//    polylineOptions.add(possibleBounds.northeast);
-//    map.addPolyline(polylineOptions);
-
-    //----------------------------------------------------------------
-    // Detect the clicked-point is closer to the line or not
-    //----------------------------------------------------------------
-    LatLng start = null, finish = null;
     for (int i = 0; i < points.size() - 1; i++) {
       p0 = new Point();
       p0.x = (int) (points.get(i).latitude * 100000);
@@ -2573,130 +2283,11 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
       testDistance2 = this.calculateDistance(point, points.get(i + 1));
       // the distance is exactly same if the point is on the straight line
       if (Math.abs(trueDistance - (testDistance1 + testDistance2)) < threshold) {
-        if (i == 0) {
-          start = points.get(0);
-          finish = points.get(1);
-        } else if (i == points.size() - 1) {
-          start = points.get(i - 1);
-          finish = points.get(i);
-        } else {
-          start = points.get(i);
-          finish = points.get(i + 1);
-        }
-        break;
+        return true;
       }
     }
 
-    if (start == null) {
-      return null;
-    }
-
-    if (start.longitude > finish.longitude) {
-      LatLng tmp = start;
-      start = finish;
-      finish = tmp;
-    }
-
-    //--------------------------
-    // debug: draw rectangle
-    //--------------------------
-//    LatLngBounds _targetBounds = new LatLngBounds(start, finish);
-//    PolylineOptions polylineOptions2 = new PolylineOptions();
-//    polylineOptions2.add(_targetBounds.northeast);
-//    polylineOptions2.add(new LatLng(_targetBounds.northeast.latitude, _targetBounds.southwest.longitude));
-//    polylineOptions2.add(_targetBounds.southwest);
-//    polylineOptions2.add(new LatLng(_targetBounds.southwest.latitude, _targetBounds.northeast.longitude));
-//    polylineOptions2.add(_targetBounds.northeast);
-//    map.addPolyline(polylineOptions2);
-
-
-    //----------------------------------------------------------------
-    // Calculate waypoints from start to finish on geodesic line
-    // @ref http://jamesmccaffrey.wordpress.com/2011/04/17/drawing-a-geodesic-line-for-bing-maps-ajax/
-    //----------------------------------------------------------------
-
-    // convert to radians
-    double lat1 = start.latitude * (Math.PI / 180.0);
-    double lng1 = start.longitude * (Math.PI / 180.0);
-    double lat2 = finish.latitude * (Math.PI / 180.0);
-    double lng2 = finish.longitude * (Math.PI / 180.0);
-
-    double d = 2 * Math.asin(Math.sqrt(Math.pow((Math.sin((lat1 - lat2) / 2)), 2) +
-        Math.cos(lat1) * Math.cos(lat2) * Math.pow((Math.sin((lng1 - lng2) / 2)), 2)));
-    List<LatLng> wayPoints = new ArrayList<LatLng>();
-    double f = 0.00000000f; // fraction of the curve
-    double finc = 0.01000000f; // fraction increment
-
-    while (f <= 1.00000000f) {
-      double A = Math.sin((1.0 - f) * d) / Math.sin(d);
-      double B = Math.sin(f * d) / Math.sin(d);
-
-      double x = A * Math.cos(lat1) * Math.cos(lng1) + B * Math.cos(lat2) * Math.cos(lng2);
-      double y = A * Math.cos(lat1) * Math.sin(lng1) + B * Math.cos(lat2) * Math.sin(lng2);
-      double z = A * Math.sin(lat1) + B * Math.sin(lat2);
-      double lat = Math.atan2(z, Math.sqrt((x*x) + (y*y)));
-      double lng = Math.atan2(y, x);
-
-      LatLng wp = new LatLng(lat / (Math.PI / 180.0), lng / ( Math.PI / 180.0));
-      if (possibleBounds.contains(wp)) {
-        wayPoints.add(wp);
-        //map.addMarker(new MarkerOptions().position(wp));
-      }
-
-      f += finc;
-    } // while
-
-    // break into waypoints with negative longitudes and those with positive longitudes
-    List<LatLng> negLons = new ArrayList<LatLng>(); // lat-lons where the lon part is negative
-    List<LatLng> posLons = new ArrayList<LatLng>();
-    List<LatLng> connect = new ArrayList<LatLng>();
-
-    for (int i = 0; i < wayPoints.size(); ++i) {
-      if (wayPoints.get(i).longitude <= 0.0f)
-        negLons.add(wayPoints.get(i));
-      else
-        posLons.add(wayPoints.get(i));
-    }
-
-    // we may have to connect over 0.0 longitude
-    for (int i = 0; i < wayPoints.size() - 1; ++i) {
-      if (wayPoints.get(i).longitude <= 0.0f && wayPoints.get(i+1).longitude >= 0.0f ||
-          wayPoints.get(i).longitude >= 0.0f && wayPoints.get(i+1).longitude <= 0.0f) {
-        if (Math.abs(wayPoints.get(i).longitude) + Math.abs(wayPoints.get(i+1).longitude) < 100.0f) {
-          connect.add(wayPoints.get(i));
-          connect.add(wayPoints.get(i+1));
-        }
-      }
-    }
-
-    ArrayList<LatLng> inspectPoints = new ArrayList<LatLng>();
-    if (negLons.size() >= 2) {
-      inspectPoints.addAll(negLons);
-    }
-    if (posLons.size() >= 2) {
-      inspectPoints.addAll(posLons);
-    }
-    if (connect.size() >= 2) {
-      inspectPoints.addAll(connect);
-    }
-
-    if (inspectPoints.size() == 0) {
-      return null;
-    }
-
-
-    double minDistance = 999999999;
-    double distance;
-    LatLng mostClosePoint = null;
-
-    for (int i = 0; i < inspectPoints.size(); i++) {
-      distance = this.calculateDistance(point, inspectPoints.get(i));
-      if (distance < minDistance) {
-        minDistance = distance;
-        mostClosePoint = inspectPoints.get(i);
-      }
-    }
-    return mostClosePoint;
+    return false;
   }
 
   /**
@@ -2775,20 +2366,10 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
 
   @Override
   public boolean onMyLocationButtonClick() {
-    jsCallback(String.format(Locale.ENGLISH, "javascript:if('%s' in plugin.google.maps){plugin.google.maps['%s']({evtName: 'my_location_button_click', callback:'_onMapEvent'});}",mapId, mapId));
+    jsCallback(String.format(Locale.ENGLISH, "javascript:if(window.cordova){cordova.fireDocumentEvent('%s',{evtName: 'my_location_button_click', callback:'_onMapEvent'});}", mapId));
     return false;
   }
 
-  @Override
-  public void onMyLocationClick(@NonNull Location location) {
-    PluginLocationService.setLastLocation(location);
-    try {
-      JSONObject result = PluginUtil.location2Json(location);
-      jsCallback(String.format(Locale.ENGLISH, "javascript:if('%s' in plugin.google.maps){plugin.google.maps['%s']({evtName: 'my_location_click', callback:'_onMapEvent', args: [%s]});}", mapId, mapId, result.toString(0)));
-    } catch (JSONException e) {
-      e.printStackTrace();
-    }
-  }
 
   /**
    * Notify the myLocationChange event to JS
@@ -2852,8 +2433,8 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
         jsCallback(
             String.format(
                 Locale.ENGLISH,
-                "javascript:if('%s' in plugin.google.maps){plugin.google.maps['%s']({evtName:'%s', callback:'_onCameraEvent', args: [%s]});}",
-                mapId, mapId, eventName, jsonStr));
+                "javascript:if(window.cordova){cordova.fireDocumentEvent('%s', {evtName:'%s', callback:'_onCameraEvent', args: [%s]});}",
+                mapId, eventName, jsonStr));
       }
     });
 
@@ -2917,7 +2498,7 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
         jsonStr = result.toString();
       }
     }
-    jsCallback(String.format(Locale.ENGLISH, "javascript:if('%s' in plugin.google.maps){plugin.google.maps['%s']({evtName:'indoor_building_focused', callback:'_onMapEvent', args: [%s]});}", mapId, mapId, jsonStr));
+    jsCallback(String.format(Locale.ENGLISH, "javascript:if(window.cordova){cordova.fireDocumentEvent('%s', {evtName:'indoor_building_focused', callback:'_onMapEvent', args: [%s]});}", mapId, jsonStr));
   }
 
   @Override
@@ -2929,13 +2510,7 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
         jsonStr = result.toString();
       }
     }
-    jsCallback(String.format(Locale.ENGLISH, "javascript:if('%s' in plugin.google.maps){plugin.google.maps['%s']({evtName:'indoor_level_activated', callback:'_onMapEvent', args: [%s]});}", mapId, mapId, jsonStr));
-  }
-  @Override
-  public void onPoiClick(PointOfInterest pointOfInterest) {
-    String js = String.format(Locale.ENGLISH, "javascript:if('%s' in plugin.google.maps){plugin.google.maps['%s']({evtName: '%s', callback:'_onMapEvent', args:['%s', \"%s\", new plugin.google.maps.LatLng(%f, %f)]});}",
-    mapId, mapId, "poi_click", pointOfInterest.placeId, pointOfInterest.name, pointOfInterest.latLng.latitude, pointOfInterest.latLng.longitude);
-    jsCallback(js);
+    jsCallback(String.format(Locale.ENGLISH, "javascript:if(window.cordova){cordova.fireDocumentEvent('%s', {evtName:'indoor_level_activated', callback:'_onMapEvent', args: [%s]});}", mapId, jsonStr));
   }
 
   private void jsCallback(final String js) {
@@ -2952,8 +2527,7 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
    * @param point
    */
   public void onMapClick(final LatLng point) {
-
-    cordova.getThreadPool().execute(new Runnable() {
+    cordova.getThreadPool().submit(new Runnable() {
       @Override
       public void run() {
 
@@ -2979,33 +2553,32 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
             //}
             //pluginEntry = plugins.get(pluginName);
             //myPlugin = (MyPlugin) pluginEntry.plugin;
-            if (objects.size() > 0) {
-              keys = objects.keys.toArray(new String[objects.size()]);
-              for (j = 0; j < keys.length; j++) {
-                key = keys[j];
-                if (key.contains("marker")) {
-                  continue;
-                }
-                if (key.contains("property")) {
-                  properties = (JSONObject) objects.get(key);
-                  try {
-                    //Log.d("PluginMap", "-----> key = " + key + ", " + properties.toString(2));
-                    //Log.d("PluginMap", "-----> key = " + key + ", isVisible = " + properties.getBoolean("isVisible") + ", isClickable = " + properties.getBoolean("isClickable"));
-                    // skip invisible overlay
-                    if (!properties.getBoolean("isVisible") ||
-                        !properties.getBoolean("isClickable")) {
-                      continue;
-                    }
-                  } catch (JSONException e) {
-                    e.printStackTrace();
-                  }
-                  bounds = (LatLngBounds) objects.get(key.replace("property", "bounds"));
-                  if (bounds.contains(point)) {
-                    //Log.d("PluginMap", "-----> add key = " + key.replace("property_", ""));
-                    boundsHitList.put(key, objects.get(key.replace("property_", "")));
-                  }
 
+            keys = objects.keys.toArray(new String[objects.size()]);
+            for (j = 0; j < keys.length; j++) {
+              key = keys[j];
+              if (key.contains("marker")) {
+                continue;
+              }
+              if (key.contains("property")) {
+                properties = (JSONObject) objects.get(key);
+                try {
+                  //Log.d("PluginMap", "-----> key = " + key + ", " + properties.toString(2));
+                  //Log.d("PluginMap", "-----> key = " + key + ", isVisible = " + properties.getBoolean("isVisible") + ", isClickable = " + properties.getBoolean("isClickable"));
+                  // skip invisible overlay
+                  if (!properties.getBoolean("isVisible") ||
+                      !properties.getBoolean("isClickable")) {
+                    continue;
+                  }
+                } catch (JSONException e) {
+                  e.printStackTrace();
                 }
+                bounds = (LatLngBounds) objects.get(key.replace("property", "bounds"));
+                if (bounds.contains(point)) {
+                  //Log.d("PluginMap", "-----> add key = " + key.replace("property_", ""));
+                  boundsHitList.put(key, objects.get(key.replace("property_", "")));
+                }
+
               }
             }
 
@@ -3014,10 +2587,10 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
           //e.printStackTrace();
         }
 
-
         cordova.getActivity().runOnUiThread(new Runnable() {
           @Override
           public void run() {
+
             //Log.d(TAG, "---> onMapClick : " + activeMarker);
             if (activeMarker != null) {
               //Log.d(TAG, "---> activeMarker.getTag() : " + activeMarker.getTag());
@@ -3026,40 +2599,37 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
                 if (markerTag.contains("-marker_")) {
                   onClusterEvent("info_close", activeMarker);
                 }
-        //              } else {
-        //                boolean useHtmlInfoWnd = activeMarker.getTitle() == null &&
-        //                    activeMarker.getSnippet() == null;
-        //                if (useHtmlInfoWnd || activeMarker.isInfoWindowShown()) {
-        //                  onInfoWindowClose(activeMarker);
-        //                }
+              } else {
+                onInfoWindowClose(activeMarker);
               }
               activeMarker = null;
             }
+            String key;
             Map.Entry<String, Object> entry;
 
             Set<Map.Entry<String, Object>> entrySet = boundsHitList.entrySet();
             Iterator<Map.Entry<String, Object>> iterator = entrySet.iterator();
+
 
             List<LatLng> points ;
             Point origin = new Point();
             Point hitArea = new Point();
             hitArea.x = 1;
             hitArea.y = 1;
-            LatLng touchPoint = null;
-            //double threshold = calculateDistance(
-            //    projection.fromScreenLocation(origin),
-            //    projection.fromScreenLocation(hitArea));
+            double threshold = calculateDistance(
+                projection.fromScreenLocation(origin),
+                projection.fromScreenLocation(hitArea));
 
             float zIndex = -1;
             float maxZIndex = -1;
             Object hitOverlay = null;
             Object overlay;
-            String key;
 
             while(iterator.hasNext()) {
               entry = iterator.next();
               key = entry.getKey();
               overlay = entry.getValue();
+
               if (key.startsWith("polyline")) {
 
                 Polyline polyline = (Polyline)overlay;
@@ -3074,20 +2644,13 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
                 points = polyline.getPoints();
 
                 if (polyline.isGeodesic()) {
-                  hitArea.x = (int)(polyline.getWidth() * density);
-                  hitArea.y = hitArea.x;
-                  double threshold = calculateDistance(
-                    projection.fromScreenLocation(origin),
-                    projection.fromScreenLocation(hitArea));
-                  touchPoint = isPointOnTheGeodesicLine(points, point, threshold);
-                  if (touchPoint != null) {
+                  if (isPointOnTheGeodesicLine(points, point, threshold)) {
                     hitOverlay = polyline;
                     maxZIndex = zIndex;
                     continue;
                   }
                 } else {
-                  touchPoint = isPointOnTheLine(points, point);
-                  if (touchPoint != null) {
+                  if (isPointOnTheLine(points, point)) {
                     hitOverlay = polyline;
                     maxZIndex = zIndex;
                     continue;
@@ -3105,7 +2668,6 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
                   continue;
                 }
                 if (isPolygonContains(polygon.getPoints(), point)) {
-                  touchPoint = point;
                   hitOverlay = polygon;
                   maxZIndex = zIndex;
                   continue;
@@ -3123,7 +2685,6 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
                   continue;
                 }
                 if (isCircleContains(circle, point)) {
-                  touchPoint = point;
                   hitOverlay = circle;
                   maxZIndex = zIndex;
                   continue;
@@ -3139,7 +2700,6 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
                   continue;
                 }
                 if (isGroundOverlayContains(groundOverlay, point)) {
-                  touchPoint = point;
                   hitOverlay = groundOverlay;
                   maxZIndex = zIndex;
                   //continue;
@@ -3147,19 +2707,15 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
               }
             }
 
-
-            final Object finalHitOverlay = hitOverlay;
-            final LatLng finalTouchPoint = touchPoint;
-
-            //Log.d("PluginMap", "---> hitOverlay = " + finalHitOverlay);
-            if (finalHitOverlay instanceof Polygon) {
-              onPolygonClick((Polygon)finalHitOverlay, finalTouchPoint);
-            } else if (finalHitOverlay instanceof Polyline) {
-              onPolylineClick((Polyline)finalHitOverlay, finalTouchPoint);
-            } else if (finalHitOverlay instanceof Circle) {
-              onCircleClick((Circle)finalHitOverlay, finalTouchPoint);
-            } else if (finalHitOverlay != null) {
-              onGroundOverlayClick((GroundOverlay)finalHitOverlay, finalTouchPoint);
+            //Log.d("PluginMap", "---> hitOverlay = " + hitOverlay);
+            if (hitOverlay instanceof Polygon) {
+              onPolygonClick((Polygon)hitOverlay, point);
+            } else if (hitOverlay instanceof Polyline) {
+              onPolylineClick((Polyline)hitOverlay, point);
+            } else if (hitOverlay instanceof Circle) {
+              onCircleClick((Circle)hitOverlay, point);
+            } else if (hitOverlay instanceof GroundOverlay) {
+              onGroundOverlayClick((GroundOverlay)hitOverlay, point);
             } else {
               // Only emit click event if no overlays are hit
               onMapEvent("map_click", point);
@@ -3168,16 +2724,7 @@ public class PluginMap extends MyPlugin implements OnMarkerClickListener,
         });
       }
     });
+
   }
-
-  public void onRequestPermissionResult(int requestCode, String[] permissions,
-                                        int[] grantResults) throws JSONException {
-    //Log.d(TAG, "---> onRequestPermissionResult");
-
-    synchronized (semaphore) {
-      semaphore.notify();
-    }
-  }
-
 
 }

@@ -1,5 +1,6 @@
 package plugin.google.maps;
 
+import android.annotation.SuppressLint;
 import android.content.res.AssetManager;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
@@ -10,8 +11,11 @@ import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.os.AsyncTask;
 import android.util.Log;
+import android.view.View;
+import android.webkit.WebView;
 
 import org.apache.cordova.CordovaInterface;
+import org.apache.cordova.CordovaPreferences;
 import org.apache.cordova.CordovaResourceApi;
 import org.apache.cordova.CordovaWebView;
 
@@ -124,17 +128,7 @@ public class AsyncLoadImage extends AsyncTask<Void, Void, AsyncLoadImage.AsyncLo
       mOptions.url = PluginUtil.getAbsolutePathFromCDVFilePath(resourceApi, mOptions.url);
     }
 
-    String currentPage = webView.getUrl();
-    if (currentPage == null) {
-      // Maybe someone close the map page.
-      this.cancel(true);
-      return;
-    }
-    currentPage = currentPage.replaceAll("#.*$", "");
-    currentPage = currentPage.replaceAll("\\?.*$", "");
-    currentPage = currentPage.replaceAll("[^\\/]*$", "");
-    this.currentPageUrl = currentPage;
-
+    this.currentPageUrl = CordovaGoogleMaps.CURRENT_URL; //webView.getUrl();
     //Log.d(TAG, "-->currentPageUrl = " + this.currentPageUrl);
 
     //View browserView = webView.getView();
@@ -190,23 +184,11 @@ public class AsyncLoadImage extends AsyncTask<Void, Void, AsyncLoadImage.AsyncLo
       return result;
     }
 
-//    Log.d(TAG, String.format("---->iconURL = %s", iconUrl));
+    //Log.d(TAG, "--> iconUrl = " + iconUrl);
     //--------------------------------
     // Load image from local path
     //--------------------------------
     if (!iconUrl.startsWith("data:image")) {
-
-      if (iconUrl.startsWith("http://localhost") ||
-          iconUrl.startsWith("http://127.0.0.1")) {
-//        Log.d(TAG, String.format("---->(201)iconURL = %s", iconUrl));
-        if (iconUrl.contains("://")) {
-          iconUrl = iconUrl.replaceAll("http://.+?/", "file:///android_asset/www/");
-        } else {
-          // Avoid WebViewLocalServer (because can not make a connection for some reason)
-          iconUrl = "file:///android_asset/www/".concat(iconUrl);
-        }
-      }
-
       if (!iconUrl.contains("://") &&
           !iconUrl.startsWith("/") &&
           !iconUrl.startsWith("www/") &&
@@ -237,11 +219,11 @@ public class AsyncLoadImage extends AsyncTask<Void, Void, AsyncLoadImage.AsyncLo
       } else {
         //Log.d(TAG, "--> iconUrl = " + iconUrl);
 
-//        if (iconUrl.indexOf("file:///android_asset/") == 0) {
-//          iconUrl = iconUrl.replace("file:///android_asset/", "");
-//        }
+        if (iconUrl.indexOf("file:///android_asset/") == 0) {
+          iconUrl = iconUrl.replace("file:///android_asset/", "");
+        }
 
-        //Log.d(TAG, "iconUrl(222) = " + iconUrl);
+        //Log.d(TAG, "iconUrl = " + iconUrl);
         if (iconUrl.contains("./")) {
           try {
             boolean isAbsolutePath = iconUrl.startsWith("/");
@@ -251,6 +233,7 @@ public class AsyncLoadImage extends AsyncTask<Void, Void, AsyncLoadImage.AsyncLo
             if (!isAbsolutePath) {
               iconUrl = iconUrl.substring(1);
             }
+            //Log.d(TAG, "iconUrl = " + iconUrl);
           } catch (Exception e) {
             e.printStackTrace();
           }
@@ -295,33 +278,23 @@ public class AsyncLoadImage extends AsyncTask<Void, Void, AsyncLoadImage.AsyncLo
           HttpURLConnection.setFollowRedirects(true);
 
           // normally, 3xx is redirect
-          try {
-            int status = http.getResponseCode();
-            if (status != HttpURLConnection.HTTP_OK) {
-              if (status == HttpURLConnection.HTTP_MOVED_TEMP
-                  || status == HttpURLConnection.HTTP_MOVED_PERM
-                  || status == HttpURLConnection.HTTP_SEE_OTHER)
-                redirect = true;
-            }
-            if (redirect) {
-              // get redirect url from "location" header field
-              url = new URL(http.getHeaderField("Location"));
+          int status = http.getResponseCode();
+          if (status != HttpURLConnection.HTTP_OK) {
+            if (status == HttpURLConnection.HTTP_MOVED_TEMP
+                || status == HttpURLConnection.HTTP_MOVED_PERM
+                || status == HttpURLConnection.HTTP_SEE_OTHER)
+              redirect = true;
+          }
+          if (redirect) {
+            // get redirect url from "location" header field
+            url = new URL(http.getHeaderField("Location"));
 
-              // get the cookie if need, for login
-              cookies = http.getHeaderField("Set-Cookie");
+            // get the cookie if need, for login
+            cookies = http.getHeaderField("Set-Cookie");
 
-              // Disconnect the current connection
-              http.disconnect();
-              redirectCnt++;
-              continue;
-            }
-            if (status == HttpURLConnection.HTTP_OK) {
-              break;
-            } else {
-              return null;
-            }
-          } catch (Exception e) {
-            Log.e(TAG, "can not connect to " + iconUrl, e);
+            // Disconnect the current connection
+            http.disconnect();
+            redirectCnt++;
           }
         }
 
@@ -341,7 +314,6 @@ public class AsyncLoadImage extends AsyncTask<Void, Void, AsyncLoadImage.AsyncLo
 
         BitmapFactory.Options options = new BitmapFactory.Options();
         options.inJustDecodeBounds = true;
-        options.inPreferredConfig = Config.ARGB_8888;
 
         // The below line just checking the bitmap size (width,height).
         // Returned value is always null.
@@ -355,17 +327,6 @@ public class AsyncLoadImage extends AsyncTask<Void, Void, AsyncLoadImage.AsyncLo
         // Resize
         int newWidth = (int)(mWidth * density);
         int newHeight = (int)(mHeight * density);
-        if (newWidth > 2000 || newHeight > 2000) {
-          float rationResize;
-          if (newWidth >=  newHeight) {
-            rationResize = 2000.0f / ((float) newWidth);
-          } else {
-            rationResize = 2000.0f / ((float) newHeight);
-          }
-          newWidth = (int)(((float)newWidth) * rationResize);
-          newHeight = (int)(((float)newHeight) * rationResize);
-          Log.w(TAG, "Since the image size is too large, the image size resizes down mandatory");
-        }
 
 
         /**
@@ -418,28 +379,16 @@ public class AsyncLoadImage extends AsyncTask<Void, Void, AsyncLoadImage.AsyncLo
         image = PluginUtil.getBitmapFromBase64encodedImage(tmp[1]);
       } else {
         try {
-          InputStream inputStream = null;
-          if (iconUrl.startsWith("file:/android_asset/")) {
-            AssetManager assetManager = cordova.getActivity().getAssets();
-            iconUrl = iconUrl.replace("file:/android_asset/", "");
-            inputStream = assetManager.open(iconUrl);
-            //Log.d(TAG, "--> iconUrl = " + iconUrl);
-          } else if (iconUrl.startsWith("file:///android_asset/")) {
-            AssetManager assetManager = cordova.getActivity().getAssets();
-            iconUrl = iconUrl.replace("file:///android_asset/", "");
-            inputStream = assetManager.open(iconUrl);
-            //Log.d(TAG, "--> iconUrl = " + iconUrl);
-          } else if (iconUrl.startsWith("/")) {
+          InputStream inputStream;
+          if (iconUrl.startsWith("/")) {
             File file = new File(iconUrl);
             inputStream = new FileInputStream(file);
-          }
-          if (inputStream != null) {
-            image = BitmapFactory.decodeStream(inputStream);
-            inputStream.close();
           } else {
-            Log.e(TAG, "Can not load the file from '" + iconUrl + "'");
-            return null;
+            AssetManager assetManager = cordova.getActivity().getAssets();
+            inputStream = assetManager.open(iconUrl);
           }
+          image = BitmapFactory.decodeStream(inputStream);
+          inputStream.close();
         } catch (IOException e) {
           e.printStackTrace();
           return null;

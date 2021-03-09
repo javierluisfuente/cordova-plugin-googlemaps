@@ -148,7 +148,7 @@ public class PluginTileProvider implements TileProvider  {
         }
       });
       try {
-        semaphore.wait(10000); // Maximum wait 10sec
+        semaphore.wait(1000); // Maximum wait 1sec
       } catch (InterruptedException e) {
         e.printStackTrace();
         return null;
@@ -172,25 +172,6 @@ public class PluginTileProvider implements TileProvider  {
         return tile;
       } else {
         return null;
-      }
-    }
-
-    if (urlStr.indexOf("data:image/") == 0 && urlStr.contains(";base64,")) {
-      String[] tmp = urlStr.split(",");
-      Bitmap image = PluginUtil.getBitmapFromBase64encodedImage(tmp[1]);
-      tile = new Tile(tileSize, tileSize, bitmapToByteArray(image));
-      image.recycle();
-      image = null;
-      return tile;
-    }
-
-    if (urlStr.startsWith("http://localhost") ||
-        urlStr.startsWith("http://127.0.0.1")) {
-      if (urlStr.contains("://")) {
-        urlStr = urlStr.replaceAll("http://.+?/", "file:///android_asset/www/");
-      } else {
-        // Avoid WebViewLocalServer (because can not make a connection for some reason)
-        urlStr = "file:///android_asset/www/".concat(urlStr);
       }
     }
 
@@ -297,8 +278,6 @@ public class PluginTileProvider implements TileProvider  {
         if (urlStr.startsWith("./")  || urlStr.startsWith("../")) {
           urlStr = urlStr.replace("././", "./");
           String currentPage = webPageUrl;
-          currentPage = currentPage.replaceAll("#.*$", "");
-          currentPage = currentPage.replaceAll("\\?.*$", "");
           currentPage = currentPage.replaceAll("[^\\/]*$", "");
           urlStr = currentPage + "/" + urlStr;
         }

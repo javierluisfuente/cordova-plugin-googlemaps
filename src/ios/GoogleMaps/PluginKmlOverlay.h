@@ -7,21 +7,20 @@
 //
 
 #import "CordovaGoogleMaps.h"
-#import "IPluginProtocol.h"
+#import "MyPlgunProtocol.h"
 #import "PluginUtil.h"
 #import "TBXML.h"
-#import "IPluginProtocol.h"
+#import "MyPlgunProtocol.h"
 
-@interface PluginKmlOverlay : CDVPlugin<IPluginProtocol>
+@interface PluginKmlOverlay : CDVPlugin<MyPlgunProtocol>
 
 @property (nonatomic) BOOL initialized;
-@property (nonatomic, strong) PluginMapViewController* mapCtrl;
-- (void)create:(CDVInvokedUrlCommand*)command;
-@end
+@property (nonatomic, strong) GoogleMapsViewController* mapCtrl;
+@property (nonatomic, strong) NSString* kmlId;
+@property (nonatomic, strong) UIView* _loadingView;
+@property (nonatomic, strong) UIActivityIndicatorView *spinner;
 
-@interface KmlParseClass : NSObject
-@property (nonatomic) NSMutableDictionary *styleHolder;
-@property (nonatomic) NSMutableDictionary *schemaHolder;
+- (void)createKmlOverlay:(CDVInvokedUrlCommand*)command;
 
--(NSMutableDictionary *)parseXml:(TBXML *)tbxml rootElement:(TBXMLElement *)rootElement;
+
 @end

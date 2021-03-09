@@ -1,21 +1,33 @@
 package plugin.google.maps;
 
+import android.content.res.AssetManager;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.os.AsyncTask;
+import android.os.Bundle;
+import android.util.Log;
 
 import com.google.android.gms.maps.model.BitmapDescriptor;
 import com.google.android.gms.maps.model.BitmapDescriptorFactory;
 import com.google.android.gms.maps.model.GroundOverlay;
 import com.google.android.gms.maps.model.GroundOverlayOptions;
 import com.google.android.gms.maps.model.LatLngBounds;
+import com.google.android.gms.maps.model.Marker;
 
 import org.apache.cordova.CallbackContext;
 import org.apache.cordova.CordovaInterface;
+import org.apache.cordova.CordovaResourceApi;
 import org.apache.cordova.CordovaWebView;
+import org.apache.cordova.LOG;
+import org.apache.cordova.PluginResult;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Set;
 
@@ -24,7 +36,6 @@ public class PluginGroundOverlay extends MyPlugin implements MyPluginInterface  
   private HashMap<Integer, AsyncTask> imageLoadingTasks = new HashMap<Integer, AsyncTask>();
   private final Object semaphore = new Object();
   private HashMap<String, Bitmap> overlayImage = new HashMap<String, Bitmap>();
-  private boolean _clearDone = false;
 
   @Override
   public void initialize(final CordovaInterface cordova, final CordovaWebView webView) {
@@ -40,14 +51,14 @@ public class PluginGroundOverlay extends MyPlugin implements MyPluginInterface  
    */
   public void create(JSONArray args, CallbackContext callbackContext) throws JSONException {
     JSONObject opts = args.getJSONObject(1);
-    String hashCode = args.getString(2);
-    _createGroundOverlay(hashCode, opts, callbackContext);
+
+    final String idBase = "" + callbackContext.hashCode();
+    _createGroundOverlay(idBase, opts, callbackContext);
   }
 
   public void _createGroundOverlay(final String idBase, final JSONObject opts, final CallbackContext callbackContext) throws JSONException {
     final GroundOverlayOptions options = new GroundOverlayOptions();
     final JSONObject properties = new JSONObject();
-    options.anchor(0.5f, 0.5f);
 
     if (opts.has("anchor")) {
       JSONArray anchor = opts.getJSONArray("anchor");
@@ -96,11 +107,10 @@ public class PluginGroundOverlay extends MyPlugin implements MyPluginInterface  
         AsyncLoadImage.AsyncLoadImageResult result = (AsyncLoadImage.AsyncLoadImageResult)object;
         BitmapDescriptor bitmapDescriptor = BitmapDescriptorFactory.fromBitmap(result.image);
         options.image(bitmapDescriptor);
-        //options.zIndex(Calendar.getInstance().getTimeInMillis());
         GroundOverlay groundOverlay = self.map.addGroundOverlay(options);
-        overlayImage.put("groundoverlay_" + idBase, result.image);
+        overlayImage.put(groundOverlay.getId(), result.image);
 
-        groundOverlay.setTag(idBase);
+        groundOverlay.setTag("groundoverlay_" + idBase);
 
         pluginMap.objects.put("groundoverlay_" + idBase, groundOverlay);
 
@@ -113,8 +123,8 @@ public class PluginGroundOverlay extends MyPlugin implements MyPluginInterface  
 
         JSONObject resultJSON = new JSONObject();
         try {
-          resultJSON.put("hashCode", idBase);
-          resultJSON.put("__pgmId", "groundoverlay_" + idBase);
+          resultJSON.put("hashCode", groundOverlay.hashCode());
+          resultJSON.put("id", "groundoverlay_" + idBase);
         } catch (Exception e) {
           e.printStackTrace();
         }
@@ -132,7 +142,6 @@ public class PluginGroundOverlay extends MyPlugin implements MyPluginInterface  
 
   @Override
   protected void clear() {
-    _clearDone = false;
     synchronized (semaphore) {
 
       //--------------------------------------
@@ -142,52 +151,43 @@ public class PluginGroundOverlay extends MyPlugin implements MyPluginInterface  
         @Override
         public void run() {
           Set<String> keySet = pluginMap.objects.keys;
-          if (keySet.size() > 0) {
-            String[] objectIdArray = keySet.toArray(new String[keySet.size()]);
+          String[] objectIdArray = keySet.toArray(new String[keySet.size()]);
 
-            synchronized (pluginMap.objects) {
-              Bitmap image;
-              for (String objectId : objectIdArray) {
-                if (pluginMap.objects.containsKey(objectId)) {
-                  if (objectId.startsWith("groundoverlay_") &&
-                      !objectId.startsWith("groundoverlay_property_") &&
-                      !objectId.startsWith("groundoverlay_initOpts_") &&
-                      !objectId.startsWith("groundoverlay_bounds_")) {
-                    GroundOverlay groundOverlay = (GroundOverlay) pluginMap.objects.remove(objectId);
-                    image = overlayImage.remove(objectId);
-                    if (image != null && !image.isRecycled()) {
-                      image.recycle();
-                    }
-                    groundOverlay.setTag(null);
-                    groundOverlay.remove();
-                    groundOverlay = null;
-                  } else {
-                    Object object = pluginMap.objects.remove(objectId);
-                    object = null;
+          synchronized (pluginMap.objects) {
+            Bitmap image;
+            for (String objectId : objectIdArray) {
+              if (pluginMap.objects.containsKey(objectId)) {
+                if (objectId.startsWith("groundoverlay_") &&
+                    !objectId.startsWith("groundoverlay_property_") &&
+                    !objectId.startsWith("groundoverlay_initOpts_") &&
+                    !objectId.startsWith("groundoverlay_bounds_")) {
+                  GroundOverlay groundOverlay = (GroundOverlay) pluginMap.objects.remove(objectId);
+                  image = overlayImage.remove(groundOverlay.getId());
+                  if (image != null && !image.isRecycled()) {
+                    image.recycle();
                   }
+                  groundOverlay.setTag(null);
+                  groundOverlay.remove();
+                  groundOverlay = null;
+                } else {
+                  Object object = pluginMap.objects.remove(objectId);
+                  object = null;
                 }
               }
             }
+          }
 
-            synchronized (semaphore) {
-              _clearDone = true;
-              semaphore.notify();
-            }
+          synchronized (semaphore) {
+            semaphore.notify();
           }
 
         }
       });
 
-      Set<String> keySet = pluginMap.objects.keys;
-      if (keySet.size() > 0) {
-        try {
-          if (!_clearDone) {
-            semaphore.wait(1000);
-          }
-        } catch (InterruptedException e) {
-          // ignore
-          //e.printStackTrace();
-        }
+      try {
+        semaphore.wait();
+      } catch (InterruptedException e) {
+        e.printStackTrace();
       }
     }
   }
@@ -217,7 +217,7 @@ public class PluginGroundOverlay extends MyPlugin implements MyPluginInterface  
         synchronized (pluginMap.objects) {
           GroundOverlay groundOverlay = (GroundOverlay) pluginMap.objects.remove(id);
           if (groundOverlay != null) {
-            Bitmap image = overlayImage.remove(id);
+            Bitmap image = overlayImage.remove(groundOverlay.getId());
             if (image != null && !image.isRecycled()) {
               image.recycle();
             }
@@ -256,13 +256,13 @@ public class PluginGroundOverlay extends MyPlugin implements MyPluginInterface  
         AsyncLoadImage.AsyncLoadImageResult result = (AsyncLoadImage.AsyncLoadImageResult) object;
         GroundOverlay groundOverlay = getGroundOverlay(id);
         if (groundOverlay != null) {
-          Bitmap currentBmp = overlayImage.remove(id);
+          Bitmap currentBmp = overlayImage.remove(groundOverlay.getId());
           if (currentBmp != null) {
             currentBmp.recycle();
           }
         }
         if (result.image != null) {
-          overlayImage.put(id, result.image);
+          overlayImage.put(groundOverlay.getId(), result.image);
           groundOverlay.setImage(BitmapDescriptorFactory.fromBitmap(result.image));
           callbackContext.success();
         } else {
@@ -288,7 +288,7 @@ public class PluginGroundOverlay extends MyPlugin implements MyPluginInterface  
     String id = args.getString(0);
     final GroundOverlay groundOverlay = (GroundOverlay)pluginMap.objects.get(id);
 
-    String propertyId = id.replace("groundoverlay_", "groundoverlay_initOpts_");
+    String propertyId = "groundoverlay_initOpts_" + groundOverlay.getId();
     JSONObject opts = (JSONObject) pluginMap.objects.get(propertyId);
 
     JSONArray points = args.getJSONArray(1);
@@ -303,7 +303,7 @@ public class PluginGroundOverlay extends MyPlugin implements MyPluginInterface  
       }
     });
 
-    String boundsId = id.replace("groundoverlay_", "groundoverlay_bounds_");
+    String boundsId = "groundoverlay_bounds_" + groundOverlay.getId();
     pluginMap.objects.put(boundsId, bounds);
 
     callbackContext.success();
@@ -380,7 +380,7 @@ public class PluginGroundOverlay extends MyPlugin implements MyPluginInterface  
         groundOverlay.setVisible(isVisible);
       }
     });
-    String propertyId = id.replace("groundoverlay_",  "groundoverlay_property_");
+    String propertyId = "groundoverlay_property_" + groundOverlay.getId();
     JSONObject properties = (JSONObject)pluginMap.objects.get(propertyId);
     properties.put("isVisible", isVisible);
     pluginMap.objects.put(propertyId, properties);
@@ -416,14 +416,14 @@ public class PluginGroundOverlay extends MyPlugin implements MyPluginInterface  
       return;
     }
 
-    final AsyncLoadImage.AsyncLoadImageOptions imageOptions = new AsyncLoadImage.AsyncLoadImageOptions();
+    AsyncLoadImage.AsyncLoadImageOptions imageOptions = new AsyncLoadImage.AsyncLoadImageOptions();
     imageOptions.height = -1;
     imageOptions.width = -1;
     imageOptions.noCaching = true;
     imageOptions.url = imgUrl;
     final int taskId = imageOptions.hashCode();
 
-    final AsyncLoadImageInterface onComplete = new AsyncLoadImageInterface() {
+    AsyncLoadImageInterface onComplete = new AsyncLoadImageInterface() {
 
       @Override
       public void onPostExecute(AsyncLoadImage.AsyncLoadImageResult result) {
@@ -438,20 +438,15 @@ public class PluginGroundOverlay extends MyPlugin implements MyPluginInterface  
         imageLoadingTasks.remove(taskId).cancel(true);
       }
     };
-    cordova.getActivity().runOnUiThread(new Runnable() {
-      @Override
-      public void run() {
-        AsyncLoadImage task = new AsyncLoadImage(cordova, webView, imageOptions, onComplete);
-        //cordova.getActivity().runOnUiThread(new Runnable() {
-        //  @Override
-        //  public void run() {
-        //    task.execute();
-        //  }
-        //});
-        task.execute();
-        imageLoadingTasks.put(taskId, task);
-      }
-    });
+    final AsyncLoadImage task = new AsyncLoadImage(cordova, webView, imageOptions, onComplete);
+    //cordova.getActivity().runOnUiThread(new Runnable() {
+    //  @Override
+    //  public void run() {
+    //    task.execute();
+    //  }
+    //});
+    task.execute();
+    imageLoadingTasks.put(taskId, task);
 
 
 /*
@@ -644,7 +639,7 @@ public class PluginGroundOverlay extends MyPlugin implements MyPluginInterface  
       @Override
       public void run() {
         AsyncTask task;
-        int i, ilen = imageLoadingTasks.size();
+        int i, ilen=imageLoadingTasks.size();
         for (i = 0; i < ilen; i++) {
           task = imageLoadingTasks.remove(i);
           task.cancel(true);

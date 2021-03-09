@@ -8,26 +8,27 @@
 
 #import <Cordova/CDV.h>
 #import <GoogleMaps/GoogleMaps.h>
-#import "PluginMapViewController.h"
-#import "PluginStreetViewPanoramaController.h"
+#import "GoogleMapsViewController.h"
 #import "PluginUtil.h"
 #import "PluginMap.h"
-#import "PluginStreetViewPanorama.h"
 #import "MyPluginLayer.h"
-#import "IPluginProtocol.h"
-#import "IPluginView.h"
+#import "MyPlgunProtocol.h"
 
-@interface CordovaGoogleMaps : CDVPlugin
+@interface CordovaGoogleMaps : CDVPlugin<CLLocationManagerDelegate>
 
 @property (nonatomic) MyPluginLayer *pluginLayer;
-@property (nonatomic) NSMutableDictionary *viewPlugins;
+@property (nonatomic, strong) CLLocationManager *locationManager;
+@property (nonatomic, strong) NSMutableArray *locationCommandQueue;
+@property (nonatomic) NSMutableDictionary *pluginMaps;
 @property (nonatomic) NSOperationQueue *executeQueue;
 
 - (void)getMap:(CDVInvokedUrlCommand*)command;
-- (void)getPanorama:(CDVInvokedUrlCommand*)command;
+- (void)getMyLocation:(CDVInvokedUrlCommand*)command;
 - (void)clearHtmlElements:(CDVInvokedUrlCommand *)command;
 - (void)putHtmlElements:(CDVInvokedUrlCommand *)command;
 - (void)removeMap:(CDVInvokedUrlCommand *)command;
 - (void)pause:(CDVInvokedUrlCommand *)command;
 - (void)resume:(CDVInvokedUrlCommand *)command;
+- (void)pauseResizeTimer:(CDVInvokedUrlCommand *)command;
+- (void)resumeResizeTimer:(CDVInvokedUrlCommand *)command;
 @end

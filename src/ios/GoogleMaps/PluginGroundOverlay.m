@@ -44,16 +44,16 @@
   key = nil;
   keys = nil;
 
-  NSString *pluginId = [NSString stringWithFormat:@"%@-groundoverlay", self.mapCtrl.overlayId];
+  NSString *pluginId = [NSString stringWithFormat:@"%@-groundoverlay", self.mapCtrl.mapId];
   CDVViewController *cdvViewController = (CDVViewController*)self.viewController;
   [cdvViewController.pluginObjects removeObjectForKey:pluginId];
   [cdvViewController.pluginsMap setValue:nil forKey:pluginId];
   pluginId = nil;
 }
 
--(void)setPluginViewController:(PluginViewController *)viewCtrl
+-(void)setGoogleMapsViewController:(GoogleMapsViewController *)viewCtrl
 {
-    self.mapCtrl = (PluginMapViewController *)viewCtrl;
+    self.mapCtrl = viewCtrl;
 }
 
 -(void)create:(CDVInvokedUrlCommand *)command
@@ -61,7 +61,6 @@
     PluginGroundOverlay *self_ = self;
 
     NSDictionary *json = [command.arguments objectAtIndex:1];
-    NSString *idBase = [command.arguments objectAtIndex:2];
     NSArray *points = [json objectForKey:@"bounds"];
 
     GMSMutablePath *path = [GMSMutablePath path];
@@ -81,37 +80,26 @@
     dispatch_async(dispatch_get_main_queue(), ^{
         GMSGroundOverlay *groundOverlay = [GMSGroundOverlay groundOverlayWithBounds:bounds icon:nil];
 
+        NSString *idBase = [NSString stringWithFormat:@"%lu%d", command.hash, arc4random() % 100000];
         NSString *groundOverlayId = [NSString stringWithFormat:@"groundoverlay_%@", idBase];
         [self.mapCtrl.objects setObject:groundOverlay forKey: groundOverlayId];
         groundOverlay.title = groundOverlayId;
-        groundOverlay.anchor = CGPointMake(0.5f, 0.5f);
 
-        if ([json valueForKey:@"zIndex"] && [json valueForKey:@"zIndex"] != [NSNull null]) {
+        if ([json valueForKey:@"zIndex"]) {
             groundOverlay.zIndex = [[json valueForKey:@"zIndex"] floatValue];
         }
 
-        if ([json valueForKey:@"bearing"] && [json valueForKey:@"bearing"] != [NSNull null]) {
+        if ([json valueForKey:@"bearing"]) {
             groundOverlay.bearing = [[json valueForKey:@"bearing"] floatValue];
         }
-        if ([json valueForKey:@"anchor"] && [json valueForKey:@"anchor"] != [NSNull null]) {
-            NSArray *anchor = [json valueForKey:@"anchor"];
-            groundOverlay.anchor = CGPointMake([[anchor objectAtIndex:0] floatValue], [[anchor objectAtIndex:1] floatValue]);
-        }
 
-        BOOL isVisible = YES;
-
-        // Visible property
-        NSString *visibleValue = [NSString stringWithFormat:@"%@",  json[@"visible"]];
-        if ([@"0" isEqualToString:visibleValue]) {
-          // false
-          isVisible = NO;
-          groundOverlay.map = nil;
-        } else {
-          // true or default
-          groundOverlay.map = self.mapCtrl.map;
+        BOOL isVisible = NO;
+        if (json[@"visible"]) {
+            groundOverlay.map = self.mapCtrl.map;
+            isVisible = YES;
         }
         BOOL isClickable = NO;
-        if ([json valueForKey:@"clickable"] != [NSNull null] && [[json valueForKey:@"clickable"] boolValue]) {
+        if ([[json valueForKey:@"clickable"] boolValue]) {
             isClickable = YES;
         }
 
@@ -136,7 +124,7 @@
                   //NSString *imgId = [NSString stringWithFormat:@"groundoverlay_image_%lu", (unsigned long)groundOverlay.hash];
                   //[me.imgCache setObject:groundOverlay.icon forKey:imgId];
 
-                  if ([json valueForKey:@"opacity"] && [json valueForKey:@"opacity"] != [NSNull null]) {
+                  if ([json valueForKey:@"opacity"]) {
                       CGFloat opacity = [[json valueForKey:@"opacity"] floatValue];
                       groundOverlay.icon = [groundOverlay.icon imageByApplyingAlpha:opacity];
                   }
@@ -163,7 +151,7 @@
                   // Result for JS
                   //---------------------------
                   NSMutableDictionary *result = [[NSMutableDictionary alloc] init];
-                  [result setObject:groundOverlayId forKey:@"__pgmId"];
+                  [result setObject:groundOverlayId forKey:@"id"];
 
                   CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsDictionary:result];
                   [self_.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
@@ -180,7 +168,6 @@
 
 - (void)_setImage:(GMSGroundOverlay *)groundOverlay urlStr:(NSString *)urlStr completionHandler:(void (^)(BOOL succeeded))completionHandler {
 
-
     NSRange range = [urlStr rangeOfString:@"http"];
 
     if (range.location != 0) {
@@ -196,8 +183,8 @@
              * Base64 icon
              */
             NSArray *tmp = [urlStr componentsSeparatedByString:@","];
-            NSData *decodedData = [[NSData alloc] initWithBase64EncodedString:[tmp objectAtIndex:1] options:0];
 
+            NSData *decodedData = [NSData dataFromBase64String:tmp[1]];
             image = [[UIImage alloc] initWithData:decodedData];
 
         } else {
@@ -224,42 +211,44 @@
                   // Get the current URL, then calculate the relative path.
                   CDVViewController *cdvViewController = (CDVViewController*)self.viewController;
                   id webview = cdvViewController.webView;
-                  dispatch_sync(dispatch_get_main_queue(), ^{
-                       NSURL *url = [webview URL];
-                       NSString *currentURL = url.absoluteString;
-                       if (![[url lastPathComponent] isEqualToString:@"/"]) {
-                         currentURL = [currentURL stringByDeletingLastPathComponent];
-                       }
+                  NSString *clsName = [webview className];
+                  NSURL *url;
+                  if ([clsName isEqualToString:@"UIWebView"]) {
+                    url = ((UIWebView *)cdvViewController.webView).request.URL;
+                    NSString *currentURL = url.absoluteString;
+                    currentURL = [currentURL stringByDeletingLastPathComponent];
+                    currentURL = [currentURL stringByReplacingOccurrencesOfString:@"file:" withString:@""];
+                    currentURL = [currentURL stringByReplacingOccurrencesOfString:@"//" withString:@"/"];
+                    currentURL = [currentURL stringByReplacingOccurrencesOfString:@"%20" withString:@" "];
+                    urlStr = [NSString stringWithFormat:@"file://%@/%@", currentURL, urlStr];
+                  } else {
+                    //------------------------------------------
+                    // WKWebView URL is use http:// always
+                    //------------------------------------------
+                    dispatch_sync(dispatch_get_main_queue(), ^{
+                      NSURL *url = [webview URL];
+                      NSString *currentURL = url.absoluteString;
+                      if (![[url lastPathComponent] isEqualToString:@"/"]) {
+                        currentURL = [currentURL stringByDeletingLastPathComponent];
+                      }
+                      url = [NSURL URLWithString:[NSString stringWithFormat:@"%@/%@", currentURL, urlStr]];
 
-                       // remove page unchor (i.e index.html#page=test, index.html?key=value)
-                       NSRegularExpression *regex = [NSRegularExpression regularExpressionWithPattern:@"[#\\?].*$" options:NSRegularExpressionCaseInsensitive error:nil];
-                       currentURL = [regex stringByReplacingMatchesInString:currentURL options:0 range:NSMakeRange(0, [currentURL length]) withTemplate:@""];
+                      [self downloadImageWithURL:url  completionBlock:^(BOOL succeeded, UIImage *image) {
 
-                       // remove file name (i.e /index.html)
-                       regex = [NSRegularExpression regularExpressionWithPattern:@"\\/[^\\/]+\\.[^\\/]+$" options:NSRegularExpressionCaseInsensitive error:nil];
-                       currentURL = [regex stringByReplacingMatchesInString:currentURL options:0 range:NSMakeRange(0, [currentURL length]) withTemplate:@""];
+                        if (!succeeded) {
+                          completionHandler(NO);
+                          return;
+                        }
 
+                        dispatch_async(dispatch_get_main_queue(), ^{
+                          groundOverlay.icon = image;
+                          completionHandler(YES);
+                        });
 
-                       NSString *urlStr2 = [NSString stringWithFormat:@"%@/%@", currentURL, urlStr];
-                       urlStr2 = [urlStr2 stringByReplacingOccurrencesOfString:@":/" withString:@"://"];
-                       urlStr2 = [urlStr2 stringByReplacingOccurrencesOfString:@":///" withString:@"://"];
-                       url = [NSURL URLWithString:urlStr2];
-
-                       [self downloadImageWithURL:url  completionBlock:^(BOOL succeeded, UIImage *image) {
-
-                         if (!succeeded) {
-                           completionHandler(NO);
-                           return;
-                         }
-
-                         dispatch_async(dispatch_get_main_queue(), ^{
-                           groundOverlay.icon = image;
-                           completionHandler(YES);
-                         });
-
-                       }];
-                   });
-                   return;
+                      }];
+                    });
+                    return;
+                  }
                 } else {
                   urlStr = [NSString stringWithFormat:@"file://%@", urlStr];
                 }
@@ -301,6 +290,8 @@
 
         }];
     }
+
+
 }
 
 /**
@@ -478,7 +469,7 @@
   [self.mapCtrl.executeQueue addOperationWithBlock:^{
 
       NSString *key = [command.arguments objectAtIndex:0];
-      //GMSGroundOverlay *groundOverlay = (GMSGroundOverlay *)[self.mapCtrl.objects objectForKey:key];
+      GMSGroundOverlay *groundOverlay = (GMSGroundOverlay *)[self.mapCtrl.objects objectForKey:key];
       Boolean isClickable = [[command.arguments objectAtIndex:1] boolValue];
 
       // Update the property
@@ -515,88 +506,34 @@
 }
 
 
+
 - (void)downloadImageWithURL:(NSURL *)url completionBlock:(void (^)(BOOL succeeded, UIImage *image))completionBlock
 {
-  [self.mapCtrl.executeQueue addOperationWithBlock:^{
+    [self.mapCtrl.executeQueue addOperationWithBlock:^{
 
-    NSString *iconPath = url.absoluteString;
-
-    // Since ionic local server declines HTTP access for some reason,
-    // replace URL with file path
-    NSBundle *mainBundle = [NSBundle mainBundle];
-    NSString *wwwPath = [mainBundle pathForResource:@"www/cordova" ofType:@"js"];
-    wwwPath = [wwwPath stringByReplacingOccurrencesOfString:@"/cordova.js" withString:@""];
-    if ([iconPath containsString:@"assets/"]) {
-      iconPath = [iconPath regReplace:@"^.*assets/" replaceTxt:[NSString stringWithFormat:@"%@/assets/", wwwPath] options:NSRegularExpressionCaseInsensitive];
-    }
-    // iconPath = [iconPath stringByReplacingOccurrencesOfString:wwwPath withString: @""];
-    
-    // ionic 4
-    iconPath = [iconPath stringByReplacingOccurrencesOfString:@"http://localhost:8080" withString: wwwPath];
-
-    // ionic 5
-    iconPath = [iconPath stringByReplacingOccurrencesOfString:@"ionic://localhost" withString: wwwPath];
-    
-    if ([iconPath hasPrefix:@"file://"] || [iconPath hasPrefix:@"/"]) {
-      iconPath = [iconPath stringByReplacingOccurrencesOfString:@"file://" withString:@""];
-      if (![iconPath hasPrefix:@"/"]) {
-        iconPath = [NSString stringWithFormat:@"/%@", iconPath];
-      }
-      NSFileManager *fileManager = [NSFileManager defaultManager];
-      if (![fileManager fileExistsAtPath:iconPath]) {
-        //if (self.mapCtrl.debuggable) {
-        NSLog(@"(error)There is no file at '%@'.", iconPath);
-        //}
-        //[self.commandDelegate sendPluginResult:pluginResult callbackId:callbackId];
-        completionBlock(NO, nil);
-        return;
-      }
-
-      UIImage *image = [UIImage imageNamed:iconPath];
-      if (image) {
-        completionBlock(YES, image);
-        return;
-      }
-    }
+        NSURLRequest *req = [NSURLRequest requestWithURL:url
+                                          cachePolicy:NSURLRequestReturnCacheDataElseLoad
+                                          timeoutInterval:5];
+        NSCachedURLResponse *cachedResponse = [[NSURLCache sharedURLCache] cachedResponseForRequest:req];
+        if (cachedResponse != nil) {
+          UIImage *image = [[UIImage alloc] initWithData:cachedResponse.data];
+          completionBlock(YES, image);
+          return;
+        }
 
 
+        [NSURLConnection sendAsynchronousRequest:req
+              queue:self.mapCtrl.executeQueue
+              completionHandler:^(NSURLResponse *res, NSData *data, NSError *error) {
+                if ( !error ) {
+                  UIImage *image = [UIImage imageWithData:data];
+                  completionBlock(YES, image);
+                } else {
+                  completionBlock(NO, nil);
+                }
 
-    NSURLRequest *req = [NSURLRequest requestWithURL:url
-                                         cachePolicy:NSURLRequestReturnCacheDataElseLoad
-                                     timeoutInterval:5];
-    NSCachedURLResponse *cachedResponse = [[NSURLCache sharedURLCache] cachedResponseForRequest:req];
-    if (cachedResponse != nil) {
-      UIImage *image = [[UIImage alloc] initWithData:cachedResponse.data];
-      if (image) {
-        completionBlock(YES, image);
-        return;
-      }
-    }
-
-
-    //-------------------------------------------------------------
-    // Use NSURLSessionDataTask instead of [NSURLConnection sendAsynchronousRequest]
-    // https://stackoverflow.com/a/20871647
-    //-------------------------------------------------------------
-    NSURLSessionConfiguration *sessionConfiguration = [NSURLSessionConfiguration defaultSessionConfiguration];
-    NSURLSession *session = [NSURLSession sessionWithConfiguration:sessionConfiguration];
-    NSURLSessionDataTask *getTask = [session dataTaskWithRequest:req
-                                               completionHandler:^(NSData *data, NSURLResponse *res, NSError *error) {
-                                                 [session finishTasksAndInvalidate];
-
-                                                 UIImage *image = [UIImage imageWithData:data];
-                                                 if (image) {
-                                                   completionBlock(YES, image);
-                                                   return;
-                                                 }
-
-                                                 completionBlock(NO, nil);
-
-                                               }];
-    [getTask resume];
-
-
-  }];
+        }];
+    }];
 }
 
 @end

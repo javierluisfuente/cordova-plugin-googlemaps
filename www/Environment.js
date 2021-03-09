@@ -1,36 +1,40 @@
-var common = require('./Common');
+var argscheck = require('cordova/argscheck'),
+    utils = require('cordova/utils'),
+    exec = require('cordova/exec'),
+    common = require('./Common');
 
 /*****************************************************************************
  * Config Class
  *****************************************************************************/
 var Environment = {};
 
-Environment.setBackgroundColor = function (color) {
-  cordova.exec(null, null, 'PluginEnvironment', 'setBackGroundColor', [common.HTMLColor2RGBA(color)]);
+Environment.setBackgroundColor = function(color) {
+    cordova.exec(null, null, 'Environment', 'setBackGroundColor', [common.HTMLColor2RGBA(color)]);
 };
 
-Environment.isAvailable = function (callback) {
-  cordova.exec(function () {
-    if (typeof callback === 'function') {
-      callback(true);
-    }
-  }, function (message) {
-    if (typeof callback === 'function') {
-      callback(false, message);
-    }
-  }, 'PluginEnvironment', 'isAvailable', ['']);
+Environment.setDebuggable = function(debug) {
+    debug = common.parseBoolean(debug);
+    cordova.exec(null, null, 'Environment', 'setDebuggable', [debug]);
 };
 
-Environment.getLicenseInfo = function (callback) {
-  cordova.exec(function (txt) {
-    callback(txt);
-  }, null, 'PluginEnvironment', 'getLicenseInfo', []);
+Environment.isAvailable = function(callback) {
+    cordova.exec(function() {
+        if (typeof callback === "function") {
+            callback(true);
+        }
+    }, function(message) {
+        if (typeof callback === "function") {
+            callback(false, message);
+        }
+    }, 'Environment', 'isAvailable', ['']);
 };
 
-Environment.setEnv = function (options) {
-  if (options) {
-    cordova.exec(null, null, 'PluginEnvironment', 'setEnv', [options]);
-  }
+
+Environment.getLicenseInfo = function(callback) {
+    cordova.exec(function(txt) {
+        callback(txt);
+    }, null, 'Environment', 'getLicenseInfo', []);
 };
+
 
 module.exports = Environment;

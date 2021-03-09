@@ -1,6 +1,5 @@
 package plugin.google.maps;
 
-import android.graphics.Bitmap;
 import android.os.Bundle;
 import android.util.Log;
 
@@ -8,6 +7,7 @@ import com.google.android.gms.maps.model.LatLng;
 import com.google.android.gms.maps.model.LatLngBounds;
 import com.google.android.gms.maps.model.Marker;
 import com.google.android.gms.maps.model.MarkerOptions;
+import com.google.android.gms.maps.model.Polygon;
 
 import org.apache.cordova.CallbackContext;
 import org.apache.cordova.CordovaInterface;
@@ -20,14 +20,14 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
-import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class PluginMarkerCluster extends PluginMarker {
 
-  private final static Map<String, STATUS> pluginMarkers = new ConcurrentHashMap<String, STATUS>();
-  private final static Map<String, Integer> waitCntManager = new ConcurrentHashMap<String, Integer>();
-  private final static Map<String, Boolean> debugFlags = new ConcurrentHashMap<String, Boolean>();
+  private final static ConcurrentHashMap<String, STATUS> pluginMarkers = new ConcurrentHashMap<String, STATUS>();
+  private final static ConcurrentHashMap<String, Integer> waitCntManager = new ConcurrentHashMap<String, Integer>();
+  private final static ConcurrentHashMap<String, Boolean> debugFlags = new ConcurrentHashMap<String, Boolean>();
   private final static ArrayList<String> deleteMarkers = new ArrayList<String>();
 
   private final Object semaphore = new Object();
@@ -61,13 +61,11 @@ public class PluginMarkerCluster extends PluginMarker {
       synchronized (pluginMarkers) {
         synchronized (deleteMarkers) {
           String clusterId_markerId;
-          if (pluginMarkers.size() > 0) {
-            String[] keys = pluginMarkers.keySet().toArray(new String[pluginMarkers.size()]);
-            for (int i = 0; i < keys.length; i++) {
-              clusterId_markerId = keys[i];
-              pluginMarkers.put(clusterId_markerId, STATUS.DELETED);
-              deleteMarkers.add(clusterId_markerId);
-            }
+          String[] keys = pluginMarkers.keySet().toArray(new String[pluginMarkers.size()]);
+          for (int i = 0; i < keys.length; i++) {
+            clusterId_markerId = keys[i];
+            pluginMarkers.put(clusterId_markerId, STATUS.DELETED);
+            deleteMarkers.add(clusterId_markerId);
           }
         }
       }
@@ -105,44 +103,43 @@ public class PluginMarkerCluster extends PluginMarker {
         Marker marker;
         STATUS status;
         String cacheKey;
-        if (deleteMarkers.size() > 0) {
-          String[] targetIDs = deleteMarkers.toArray(new String[deleteMarkers.size()]);
+        String[] targetIDs = deleteMarkers.toArray(new String[deleteMarkers.size()]);
 
-          for (int i = targetIDs.length - 1; i > -1; i--) {
-            markerId = targetIDs[i];
+        for (int i = targetIDs.length - 1; i > -1; i--) {
+          markerId = targetIDs[i];
 
-            marker = self.getMarker(markerId);
-            synchronized (pluginMarkers) {
-              status =  pluginMarkers.get(markerId);
+          marker = self.getMarker(markerId);
+          synchronized (pluginMarkers) {
+            status =  pluginMarkers.get(markerId);
 
-              if (!STATUS.WORKING.equals(status)) {
-                synchronized (pluginMap.objects) {
-                  _removeMarker(marker);
-                  marker = null;
+            if (!STATUS.WORKING.equals(status)) {
+              synchronized (pluginMap.objects) {
+                _removeMarker(marker);
+                marker = null;
 
-                  cacheKey = (String) pluginMap.objects.remove("marker_icon_" + markerId);
-                  if (cacheKey != null && iconCacheKeys.containsKey(cacheKey)) {
-                    int count = iconCacheKeys.get(cacheKey);
-                    if (count < 1) {
-                      iconCacheKeys.remove(cacheKey);
-                      AsyncLoadImage.removeBitmapFromMemCahce(cacheKey);
-                    } else {
-                      iconCacheKeys.put(cacheKey, count - 1);
-                    }
+                cacheKey = (String) pluginMap.objects.remove("marker_icon_" + markerId);
+                if (cacheKey != null && iconCacheKeys.containsKey(cacheKey)) {
+                  int count = iconCacheKeys.get(cacheKey);
+                  if (count < 1) {
+                    iconCacheKeys.remove(cacheKey);
+                    AsyncLoadImage.removeBitmapFromMemCahce(cacheKey);
+                  } else {
+                    iconCacheKeys.put(cacheKey, count - 1);
                   }
-
-
-                  pluginMap.objects.remove(markerId);
-                  pluginMap.objects.remove("marker_property_" + markerId);
-                  pluginMap.objects.remove("marker_imageSize_" + markerId);
                 }
-                pluginMarkers.remove(markerId);
-                deleteMarkers.remove(i);
-              } else {
-                pluginMarkers.put(markerId, STATUS.DELETED);
+
+
+                pluginMap.objects.remove(markerId);
+                pluginMap.objects.remove("marker_property_" + markerId);
+                pluginMap.objects.remove("marker_imageSize_" + markerId);
               }
+              pluginMarkers.remove(markerId);
+              deleteMarkers.remove(i);
+            } else {
+              pluginMarkers.put(markerId, STATUS.DELETED);
             }
           }
+
         }
       }
       System.gc();
@@ -215,7 +212,6 @@ public class PluginMarkerCluster extends PluginMarker {
   public void create(final JSONArray args, final CallbackContext callbackContext) throws JSONException {
 
     JSONObject params = args.getJSONObject(1);
-    String hashCode = args.getString(2);
     JSONArray positionList = params.getJSONArray("positionList");
     JSONArray geocellList = new JSONArray();
     JSONObject position;
@@ -225,14 +221,14 @@ public class PluginMarkerCluster extends PluginMarker {
       geocellList.put(getGeocell(position.getDouble("lat"), position.getDouble("lng"), 12));
     }
 
-    String id = "markercluster_" + hashCode;
+    String id = "markercluster_" + callbackContext.hashCode();
     debugFlags.put(id, params.getBoolean("debug"));
 
     final JSONObject result = new JSONObject();
     try {
       result.put("geocellList", geocellList);
-      result.put("hashCode", hashCode);
-      result.put("__pgmId", id);
+      result.put("hashCode", callbackContext.hashCode());
+      result.put("id", id);
     } catch (JSONException e) {
       e.printStackTrace();
     }
@@ -269,7 +265,7 @@ public class PluginMarkerCluster extends PluginMarker {
     for (int i = 0; i < new_or_updateCnt; i++) {
       clusterData = new_or_update.getJSONObject(i);
       positionJSON = clusterData.getJSONObject("position");
-      markerId = clusterData.getString("__pgmId");
+      markerId = clusterData.getString("id");
       clusterId_markerId =  clusterId + "-" + markerId;
 
       // Save the marker properties
@@ -288,7 +284,7 @@ public class PluginMarkerCluster extends PluginMarker {
       if (clusterData.has("title")) {
         properties.putString("title", clusterData.getString("title"));
       }
-      properties.putString("__pgmId", clusterId_markerId);
+      properties.putString("id", clusterId_markerId);
 
       if (clusterData.has("icon")) {
         Object iconObj = clusterData.get("icon");
@@ -355,8 +351,6 @@ public class PluginMarkerCluster extends PluginMarker {
     //---------------------------
     // mapping markers on the map
     //---------------------------
-    final JSONObject allResults = new JSONObject();
-
     cordova.getActivity().runOnUiThread(new Runnable() {
       @Override
       public void run() {
@@ -402,30 +396,6 @@ public class PluginMarkerCluster extends PluginMarker {
                         pluginMarkers.remove(fMarkerId);
                       } else {
                         pluginMarkers.put(fMarkerId, STATUS.CREATED);
-
-
-                        JSONObject result = new JSONObject();
-                        if (icons.containsKey(fMarkerId)) {
-                          Bitmap icon = icons.get(fMarkerId);
-                          try {
-                            result.put("width", icon.getWidth() / density);
-                            result.put("height", icon.getHeight() / density);
-                          } catch (Exception e) {
-                            e.printStackTrace();
-                          }
-                        } else {
-                          try {
-                            result.put("width", 24);
-                            result.put("height", 42);
-                          } catch (Exception e) {
-                            e.printStackTrace();
-                          }
-                        }
-                        try {
-                          allResults.put(fMarkerId.split("-")[1], result);
-                        } catch (JSONException e) {
-                          e.printStackTrace();
-                        }
                       }
                     }
                     decreaseWaitCnt(clusterId);
@@ -476,8 +446,8 @@ public class PluginMarkerCluster extends PluginMarker {
           if (isNew) {
             // If the requested id is new location, create a marker
             marker = map.addMarker(new MarkerOptions()
-                    .position(new LatLng(markerProperties.getDouble("lat"), markerProperties.getDouble("lng")))
-                    .visible(false));
+                .position(new LatLng(markerProperties.getDouble("lat"), markerProperties.getDouble("lng")))
+                .visible(false));
             marker.setTag(clusterId_markerId);
 
             // Store the marker instance with markerId
@@ -561,7 +531,7 @@ public class PluginMarkerCluster extends PluginMarker {
         e.printStackTrace();
       }
     }
-    callbackContext.success(allResults);
+    callbackContext.success();
 
   }
   private void deleteProcess(final String clusterId, final JSONObject params) {
@@ -699,17 +669,17 @@ public class PluginMarkerCluster extends PluginMarker {
   }
   private char _subdiv_char(int posX, int posY) {
     return GEOCELL_ALPHABET.charAt(
-            (posY & 2) << 2 |
-                    (posX & 2) << 1 |
-                    (posY & 1) << 1 |
-                    (posX & 1) << 0);
+        (posY & 2) << 2 |
+            (posX & 2) << 1 |
+            (posY & 1) << 1 |
+            (posX & 1) << 0);
   }
 
   private double[] _subdiv_xy(char cellChar) {
     int charI = GEOCELL_ALPHABET.indexOf(cellChar);
     return new double[]{
-            (double)((charI & 4) >> 1 | (charI & 1) >> 0) + 0.0f,
-            (double)((charI & 8) >> 2 | (charI & 2) >> 1) + 0.0f
+        (double)((charI & 4) >> 1 | (charI & 1) >> 0) + 0.0f,
+        (double)((charI & 8) >> 2 | (charI & 2) >> 1) + 0.0f
     };
   }
 
@@ -732,9 +702,9 @@ public class PluginMarkerCluster extends PluginMarker {
       y = xy[1];
 
       bbox = new BoundBox(bbox.getSouth() + subcell_lat_span * (y + 1.0f),
-              bbox.getWest() + subcell_lng_span * (double)(x + 1.0f),
-              bbox.getSouth() + subcell_lat_span * y,
-              bbox.getWest() + subcell_lng_span * x);
+          bbox.getWest() + subcell_lng_span * (double)(x + 1.0f),
+          bbox.getSouth() + subcell_lat_span * y,
+          bbox.getWest() + subcell_lng_span * x);
 
       geocell = geocell.substring(1);
     }

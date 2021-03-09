@@ -7,39 +7,23 @@
 //
 
 #import <UIKit/UIKit.h>
-#import "PluginMapViewController.h"
+#import "GoogleMapsViewController.h"
 #import "MyPluginScrollView.h"
-
-@interface CGDOMRect : NSObject
-  @property CGFloat left;
-  @property CGFloat right;
-  @property CGFloat top;
-  @property CGFloat bottom;
-@end
-
-@interface OverflowCSS : NSObject
-  @property BOOL cropX;
-  @property BOOL cropY;
-  @property CGRect rect;
-@end
 
 @interface MyPluginLayer : UIView<UIScrollViewDelegate>
 
 @property (nonatomic) UIView *webView;
 @property (nonatomic) MyPluginScrollView *pluginScrollView;
-@property (atomic) NSTimer *redrawTimer;
+@property (nonatomic) NSTimer *redrawTimer;
 @property (nonatomic) BOOL isSuspended;
+@property (nonatomic) BOOL pauseResize;
+@property (nonatomic) BOOL stopFlag;
 @property (nonatomic) NSOperationQueue *executeQueue;
-@property (atomic, strong) NSObject *_lockObject;
-@property (atomic, strong) NSMutableDictionary *CACHE_FIND_DOM;
 
 - (id)initWithWebView:(UIView *)webView;
 - (void)resizeTask:(NSTimer *)timer;
 - (void)clearHTMLElements;
 - (void)putHTMLElements:(NSDictionary *)elementsDic;
-- (void)addPluginOverlay:(PluginViewController *)pluginViewCtrl;
-- (void)removePluginOverlay:(PluginViewController *)pluginViewCtrl;
-- (void)updateViewPosition:(PluginViewController *)pluginViewCtrl;
-- (void)startRedrawTimer;
-- (void)stopRedrawTimer;
+- (void)addMapView:(GoogleMapsViewController *)mapCtrl;
+- (void)removeMapView:(GoogleMapsViewController *)mapCtrl;
 @end

@@ -10,9 +10,9 @@
 
 @implementation PluginTileOverlay
 
--(void)setPluginViewController:(PluginViewController *)viewCtrl
+-(void)setGoogleMapsViewController:(GoogleMapsViewController *)viewCtrl
 {
-  self.mapCtrl = (PluginMapViewController *)viewCtrl;
+  self.mapCtrl = viewCtrl;
 }
 - (void)pluginInitialize
 {
@@ -58,7 +58,7 @@
   key = nil;
   keys = nil;
 
-  NSString *pluginId = [NSString stringWithFormat:@"%@-tileoverlay", self.mapCtrl.overlayId];
+  NSString *pluginId = [NSString stringWithFormat:@"%@-tileoverlay", self.mapCtrl.mapId];
   CDVViewController *cdvViewController = (CDVViewController*)self.viewController;
   [cdvViewController.pluginObjects removeObjectForKey:pluginId];
   [cdvViewController.pluginsMap setValue:nil forKey:pluginId];
@@ -72,12 +72,11 @@
   dispatch_async(dispatch_get_main_queue(), ^{
 
       NSDictionary *json = [command.arguments objectAtIndex:1];
-      NSString *idBase = [command.arguments objectAtIndex:2];
       //NSString *tileUrlFormat = [json objectForKey:@"tileUrlFormat"];
 
 
       GMSTileLayer *layer;
-      NSString *_id = [NSString stringWithFormat:@"tileoverlay_%@", idBase];
+      NSString *_id = [NSString stringWithFormat:@"tileoverlay_%@", [json valueForKey:@"_id"]];
 
       //NSRange range = [tileUrlFormat rangeOfString:@"http"];
       //if (range.location != 0) {
@@ -85,11 +84,17 @@
 
           CDVViewController *cdvViewController = (CDVViewController*)self.viewController;
           id webview = cdvViewController.webView;
-          NSURL *url = [webview URL];
+          NSString *clsName = [webview className];
+          NSURL *url;
+          if ([clsName isEqualToString:@"UIWebView"]) {
+            url = ((UIWebView *)cdvViewController.webView).request.URL;
+          } else {
+            url = [webview URL];
+          }
           NSString *webPageUrl = url.absoluteString;
           [options setObject:webPageUrl forKey:@"webPageUrl"];
-          [options setObject:self.mapCtrl.overlayId forKey:@"mapId"];
-          [options setObject:idBase forKey:@"pluginId"];
+          [options setObject:self.mapCtrl.mapId forKey:@"mapId"];
+          [options setObject:[json valueForKey:@"_id"] forKey:@"pluginId"];
 
           ///[options setObject:tileUrlFormat forKey:@"tileUrlFormat"];
           [options setObject:[json objectForKey:@"tileSize"] forKey:@"tileSize"];
@@ -111,22 +116,17 @@
 
 
 
-      // Visible property
-      NSString *visibleValue = [NSString stringWithFormat:@"%@",  json[@"visible"]];
-      if ([@"0" isEqualToString:visibleValue]) {
-        // false
-        layer.map = nil;
-      } else {
-        // true or default
+
+      if (json[@"visible"]) {
         layer.map = self.mapCtrl.map;
       }
-      if ([json valueForKey:@"zIndex"] && [json valueForKey:@"zIndex"] != [NSNull null]) {
+      if ([json valueForKey:@"zIndex"]) {
         layer.zIndex = [[json valueForKey:@"zIndex"] floatValue];
       }
-      if ([json valueForKey:@"tileSize"] && [json valueForKey:@"tileSize"] != [NSNull null]) {
+      if ([json valueForKey:@"tileSize"]) {
         layer.tileSize = [[json valueForKey:@"tileSize"] integerValue];
       }
-      if ([json valueForKey:@"opacity"] && [json valueForKey:@"opacity"] != [NSNull null]) {
+      if ([json valueForKey:@"opacity"]) {
         layer.opacity = [[json valueForKey:@"opacity"] floatValue];
       }
 
@@ -136,7 +136,7 @@
           [self.mapCtrl.objects setObject:layer forKey:_id];
 
           NSMutableDictionary *result = [[NSMutableDictionary alloc] init];
-          [result setObject:_id forKey:@"__pgmId"];
+          [result setObject:_id forKey:@"id"];
 
           CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsDictionary:result];
           [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];

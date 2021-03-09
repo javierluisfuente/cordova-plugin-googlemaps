@@ -19,23 +19,7 @@ NSDictionary *debugAttributes;
     self = [super init];
     self.webView  = webView;
     //self.tileUrlFormat = [options objectForKey:@"tileUrlFormat"];
-    //NSString *urlStr = [options objectForKey:@"wwwPath"];
-  
-  
-    // Since ionic local server declines HTTP access for some reason,
-    // replace URL with file path
-    NSBundle *mainBundle = [NSBundle mainBundle];
-    NSString *urlStr = [mainBundle pathForResource:@"www/cordova" ofType:@"js"];
-    urlStr = [urlStr stringByReplacingOccurrencesOfString:@"/cordova.js" withString:@""];
-
-    // ionic 4
-    urlStr = [urlStr stringByReplacingOccurrencesOfString:@"http://localhost:8080" withString: urlStr];
-    
-    // ionic 5
-    urlStr = [urlStr stringByReplacingOccurrencesOfString:@"ionic://localhost" withString: urlStr];
-    self.wwwPath = urlStr;
-  
-  
+    self.webPageUrl = [options objectForKey:@"webPageUrl"];
     if ([options objectForKey:@"tileSize"]) {
         self.tileSize = [[options objectForKey:@"tileSize"] floatValue];
     } else {
@@ -107,17 +91,16 @@ NSDictionary *debugAttributes;
 
 
       }];
-      dispatch_semaphore_wait(self.semaphore, dispatch_time(DISPATCH_TIME_NOW, (uint64_t)(10 * NSEC_PER_SEC))); // Maximum wait 10sec
+      dispatch_semaphore_wait(self.semaphore, dispatch_time(DISPATCH_TIME_NOW, 10 * 1000 * 1000 * 1000)); // Maximum wait 10sec
 
   }
   NSString *urlStr = nil;
   @synchronized (self.tileUrlMap) {
     urlStr = [self.tileUrlMap objectForKey:urlKey];
     [self.tileUrlMap removeObjectForKey:urlKey];
-  }
-  NSString *originalUrlStr = urlStr;
+  }  NSString *originalUrlStr = urlStr;
 
-  if (urlStr == nil || [urlStr containsString:@"(null)"]) {
+  if (urlStr == nil || [urlStr isEqualToString:@"(null)"]) {
     //-------------------------
     // No image tile
     //-------------------------
@@ -131,21 +114,6 @@ NSDictionary *debugAttributes;
      } else {
        [receiver receiveTileWithX:x y:y zoom:zoom image:kGMSTileLayerNoTile];
      }
-    return;
-  }
-
-  if ([urlStr rangeOfString:@"data:image/"].location != NSNotFound &&
-      [urlStr rangeOfString:@";base64,"].location != NSNotFound) {
-
-    NSArray *tmp = [urlStr componentsSeparatedByString:@","];
-    NSData *decodedData = [[NSData alloc] initWithBase64EncodedString:[tmp objectAtIndex:1] options:0];
-
-    UIImage *image = [[UIImage alloc] initWithData:decodedData];
-    if (image.size.width != self.tileSize || image.size.height != self.tileSize) {
-      image = [image resize:self.tileSize height:self.tileSize];
-    }
-    [receiver receiveTileWithX:x y:y zoom:zoom image:image];
-    return;
   }
 
   NSRange range = [urlStr rangeOfString:@"http"];
@@ -156,44 +124,48 @@ NSDictionary *debugAttributes;
       [self downloadImageWithX:x y:y zoom:zoom url:[NSURL URLWithString:urlStr] receiver:receiver];
       return;
   }
-  urlStr = [urlStr stringByReplacingOccurrencesOfString:@"file://" withString:@""];
-  
-  // ionic 4
-  urlStr = [urlStr stringByReplacingOccurrencesOfString:@"http://localhost:8080" withString: self.wwwPath];
-  
-  // ionic 5
-  urlStr = [urlStr stringByReplacingOccurrencesOfString:@"ionic://localhost" withString: self.wwwPath];
-  
-  if ([urlStr hasPrefix:@"http://"] || [urlStr hasPrefix:@"https://"]) {
-      //-------------------------
-      // http:// or https://
-      //-------------------------
-      [self downloadImageWithX:x y:y zoom:zoom url:[NSURL URLWithString:urlStr] receiver:receiver];
-      return;
-  } else {
-      //-------------------------
-      // Absolute file path
-      //-------------------------
-      urlStr = [NSString stringWithFormat:@"file://%@", urlStr];
 
-      //-------------------------
-      // file path
-      //-------------------------
-      urlStr = [urlStr stringByReplacingOccurrencesOfString:@"file://" withString:@""];
+  range = [urlStr rangeOfString:@"://"];
+  if (range.location == NSNotFound) {
 
-      NSFileManager *fileManager = [NSFileManager defaultManager];
-      if (![fileManager fileExistsAtPath:urlStr]) {
-         if (self.isDebug) {
-           UIImage *image = [self drawDebugInfoWithImage:nil
-                                               x:x
-                                               y:y
-                                               zoom:zoom
-                                               url: originalUrlStr];
-           [receiver receiveTileWithX:x y:y zoom:zoom image:image];
-         } else {
-           [receiver receiveTileWithX:x y:y zoom:zoom image:kGMSTileLayerNoTile];
-         }
-         return;
+      range = [urlStr rangeOfString:@"/"];
+      if (range.location != 0) {
+          //-------------------------------------------------------
+          // Get the current URL, then calculate the relative path.
+          //-------------------------------------------------------
+          NSString *currentURL = [NSString stringWithString:self.webPageUrl];
+          currentURL = [currentURL stringByDeletingLastPathComponent];
+          currentURL = [currentURL stringByReplacingOccurrencesOfString:@"file:" withString:@""];
+          currentURL = [currentURL stringByReplacingOccurrencesOfString:@"//" withString:@"/"];
+          urlStr = [NSString stringWithFormat:@"file://%@/%@", currentURL, urlStr];
+      } else {
+          //-------------------------
+          // Absolute file path
+          //-------------------------
+          urlStr = [NSString stringWithFormat:@"file://%@", urlStr];
+      }
+
+      range = [urlStr rangeOfString:@"file://"];
+      if (range.location != NSNotFound) {
+          //-------------------------
+          // file path
+          //-------------------------
+          urlStr = [urlStr stringByReplacingOccurrencesOfString:@"file://" withString:@""];
+
+          NSFileManager *fileManager = [NSFileManager defaultManager];
+          if (![fileManager fileExistsAtPath:urlStr]) {
+             if (self.isDebug) {
+               UIImage *image = [self drawDebugInfoWithImage:nil
+                                                   x:x
+                                                   y:y
+                                                   zoom:zoom
+                                                   url: originalUrlStr];
+               [receiver receiveTileWithX:x y:y zoom:zoom image:image];
+             } else {
+               [receiver receiveTileWithX:x y:y zoom:zoom image:kGMSTileLayerNoTile];
+             }
+             return;
+          }
       }
 
 
@@ -232,7 +204,6 @@ NSDictionary *debugAttributes;
       return;
 
   }
-
 
 }
 
@@ -281,34 +252,30 @@ NSDictionary *debugAttributes;
     NSCachedURLResponse *cachedResponse = [[NSURLCache sharedURLCache] cachedResponseForRequest:req];
     if (cachedResponse != nil) {
       UIImage *image = [[UIImage alloc] initWithData:cachedResponse.data];
-      if (image) {
-        if (self.isDebug) {
-          image = [self drawDebugInfoWithImage:image
-                                             x:x
-                                             y:y
-                                             zoom:zoom
-                                             url: url.absoluteString];
-        }
-        [receiver receiveTileWithX:x y:y zoom:zoom image:image];
-        return;
+      if (self.isDebug) {
+        image = [self drawDebugInfoWithImage:image
+                                           x:x
+                                           y:y
+                                           zoom:zoom
+                                           url: url.absoluteString];
       }
+      [receiver receiveTileWithX:x y:y zoom:zoom image:image];
+      return;
     }
 
     NSString *uniqueKey = url.absoluteString;
     NSData *cache = [self.imgCache objectForKey:uniqueKey];
     if (cache != nil) {
       UIImage *image = [[UIImage alloc] initWithData:cache];
-      if (image) {
-        if (self.isDebug) {
-          image = [self drawDebugInfoWithImage:image
-                                             x:x
-                                             y:y
-                                             zoom:zoom
-                                             url: url.absoluteString];
-        }
-        [receiver receiveTileWithX:x y:y zoom:zoom image:image];
-        return;
+      if (self.isDebug) {
+        image = [self drawDebugInfoWithImage:image
+                                           x:x
+                                           y:y
+                                           zoom:zoom
+                                           url: url.absoluteString];
       }
+      [receiver receiveTileWithX:x y:y zoom:zoom image:image];
+      return;
     }
 
     //-------------------------------------------------------------
@@ -319,7 +286,6 @@ NSDictionary *debugAttributes;
     NSURLSession *session = [NSURLSession sessionWithConfiguration:sessionConfiguration];
     NSURLSessionDataTask *getTask = [session dataTaskWithRequest:req
                              completionHandler:^(NSData *data, NSURLResponse *res, NSError *error) {
-                               [session finishTasksAndInvalidate];
                                if ( !error ) {
                                  [self.imgCache setObject:data forKey:uniqueKey cost:data.length];
                                  UIImage *image = [UIImage imageWithData:data];

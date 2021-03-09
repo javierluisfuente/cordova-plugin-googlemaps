@@ -17,8 +17,7 @@
 //#import "MFGoogleMapAdditions/GMSCoordinateBounds+Geometry.h"
 #import "GMSCoordinateBounds+Geometry.h"
 #import <math.h>
-#import "IPluginProtocol.h"
-#import "PluginViewController.h"
+#import "MyPlgunProtocol.h"
 #import <Cordova/CDVCommandDelegate.h>
 #import <Cordova/CDVCommandDelegateImpl.h>
 
@@ -54,6 +53,16 @@ typedef void (^MYCompletionHandler)(NSError *error);
 @end
 
 //
+// Override the webViewDidFinishLoad
+// http://stackoverflow.com/questions/5272451/overriding-methods-using-categories-in-objective-c#5272612
+//
+@interface MainViewController (CDVViewController)
+#if CORDOVA_VERSION_MIN_REQUIRED < __CORDOVA_4_0_0
+- (void)webViewDidFinishLoad:(UIWebView*)theWebView;
+#endif
+@end
+
+//
 // animationDidStop for group animation
 // http://stackoverflow.com/a/28051909/697856
 //
@@ -65,13 +74,12 @@ typedef void (^TIFAnimationGroupCompletionBlock)();
 
 @interface PluginUtil : NSObject
 + (BOOL)isPolygonContains:(GMSPath *)path coordinate:(CLLocationCoordinate2D)coordinate projection:(GMSProjection *)projection;
-+ (CLLocationCoordinate2D)isPointOnTheLine:(GMSPath *)path coordinate:(CLLocationCoordinate2D)coordinate projection:(GMSProjection *)projection;
-+ (CLLocationCoordinate2D)isPointOnTheGeodesicLine:(GMSPath *)path coordinate:(CLLocationCoordinate2D)coordinate threshold:(double)threshold projection:(GMSProjection *)projection;
++ (BOOL)isPointOnTheLine:(GMSPath *)path coordinate:(CLLocationCoordinate2D)coordinate projection:(GMSProjection *)projection;
++ (BOOL)isPointOnTheGeodesicLine:(GMSPath *)path coordinate:(CLLocationCoordinate2D)coordinate threshold:(double)threshold;
 + (BOOL)isCircleContains:(GMSCircle *)circle coordinate:(CLLocationCoordinate2D)point;
 + (BOOL)isInDebugMode;
 + (GMSMutablePath *)getMutablePathFromCircle:(CLLocationCoordinate2D)center radius:(double)radius;
 + (NSString *)getAbsolutePathFromCDVFilePath:(UIView*)theWebView cdvFilePath:(NSString *)cdvFilePath;
-+ (NSString *)PGM_LOCALIZATION:(NSString *)key;
 @end
 
 
@@ -81,10 +89,4 @@ typedef void (^TIFAnimationGroupCompletionBlock)();
     self.enabled = NO;
     self.enabled = YES;
 }
-@end
-
-
-
-@interface CDVPlugin (GoogleMapsPlugin)
-- (void)setPluginViewController: (PluginViewController*)viewCtrl;
 @end
